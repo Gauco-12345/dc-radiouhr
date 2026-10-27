@@ -63,6 +63,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /** icon: "" = noch nicht gesucht, "-" = keins gefunden, sonst Bild-URL */
+data class DayForecast(val label: String, val code: Int, val max: Double, val min: Double, val wind: Double)
+
 data class Station(val name: String, val url: String, val icon: String = "")
 
 class MainActivity : Activity() {
@@ -89,9 +91,12 @@ class MainActivity : Activity() {
     private lateinit var tvNowPlaying: TextView
     private lateinit var favScroll: HorizontalScrollView
     private lateinit var favRow: LinearLayout
-    private lateinit var btnPlay: TextView
-    private lateinit var btnTimer: TextView
-    private lateinit var btnNight: TextView
+    private lateinit var btnPlay: ImageView
+    private lateinit var btnTimer: View
+    private lateinit var tvTimerBadge: TextView
+    private lateinit var btnNight: View
+    private lateinit var weatherRow: View
+    private lateinit var forecastRow: LinearLayout
     private lateinit var knob: KnobView
 
     private val stations = mutableListOf<Station>()
@@ -137,7 +142,10 @@ class MainActivity : Activity() {
         favRow = findViewById(R.id.favRow)
         btnPlay = findViewById(R.id.btnPlay)
         btnTimer = findViewById(R.id.btnTimer)
+        tvTimerBadge = findViewById(R.id.tvTimerBadge)
         btnNight = findViewById(R.id.btnNight)
+        weatherRow = findViewById(R.id.weatherRow)
+        forecastRow = findViewById(R.id.forecastRow)
 
         tvTime.typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
         tvTemp.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
@@ -146,8 +154,6 @@ class MainActivity : Activity() {
         loadStations()
 
         btnPlay.setOnClickListener { if (wantPlaying) stopRadio() else playCurrent() }
-        findViewById<View>(R.id.btnPrev).setOnClickListener { step(-1) }
-        findViewById<View>(R.id.btnNext).setOnClickListener { step(1) }
         knob = findViewById(R.id.knob)
         knob.onChange = { v ->
             val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
@@ -158,6 +164,7 @@ class MainActivity : Activity() {
         btnNight.setOnClickListener { setNight(!night) }
         findViewById<View>(R.id.btnSettings).setOnClickListener { showSettings() }
         clockPanel.setOnClickListener { setNight(!night) }
+        root.setOnClickListener { if (night) setNight(false) }
 
         showStationName()
         loadIcons()
@@ -248,14 +255,18 @@ class MainActivity : Activity() {
             clockPanel.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.3f)
             radioPanel.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
             val panelW = dm.widthPixels * 0.55f
-            tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, minOf(panelW / 3.0f, dm.heightPixels * 0.33f))
+            tvTime.setTextSize(
+                TypedValue.COMPLEX_UNIT_PX,
+                if (night) minOf(dm.widthPixels / 3.0f, dm.heightPixels * 0.6f)
+                else minOf(panelW / 3.0f, dm.heightPixels * 0.26f)
+            )
         } else {
             root.orientation = LinearLayout.VERTICAL
             clockPanel.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
             radioPanel.layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             )
-            tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, dm.widthPixels / 3.2f)
+            tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, dm.widthPixels / (if (night) 2.9f else 3.4f))
         }
     }
 
@@ -288,9 +299,9 @@ class MainActivity : Activity() {
                 if (left <= 0) {
                     sleepAt = 0
                     stopRadio()
-                    btnTimer.text = "Timer"
+                    tvTimerBadge.text = ""
                 } else {
-                    btnTimer.text = "Timer ${(left / 60000) + 1}′"
+                    tvTimerBadge.text = "${(left / 60000) + 1}′"
                 }
             }
             main.postDelayed(this, 1000 - System.currentTimeMillis() % 1000)
@@ -322,24 +333,30 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun isNightHour(): Boolean {
+        val h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        return h >= 22 || h < 7
+    }
+
+    private val backToNight = Runnable { if (!night && isNightHour()) setNight(true) }
+
     private fun setNight(on: Boolean) {
         night = on
-        val fg = if (on) Color.parseColor("#B8432F") else Color.WHITE
-        val sub = if (on) Color.parseColor("#7A2C20") else Color.parseColor("#AAAAAA")
-        tvTime.setTextColor(fg)
-        tvTemp.setTextColor(fg)
-        tvStation.setTextColor(fg)
-        tvDate.setTextColor(sub)
-        tvWeatherInfo.setTextColor(sub)
-        tvNowPlaying.setTextColor(sub)
-        tvEvents.setTextColor(if (on) sub else Color.parseColor("#DDDDDD"))
-        tvWeatherIcon.setTextColor(if (on) sub else Color.parseColor("#FFD27A"))
-        radioPanel.alpha = if (on) 0.4f else 1f
-        knob.accent = if (on) Color.parseColor("#B8432F") else accent
-        btnNight.text = if (on) "Tag" else "Nacht"
+        val vis = if (on) View.GONE else View.VISIBLE
+        radioPanel.visibility = vis
+        tvDate.visibility = vis
+        weatherRow.visibility = vis
+        tvWeatherInfo.visibility = vis
+        forecastRow.visibility = vis
+        if (on) tvEvents.visibility = View.GONE else loadEvents()
+        tvTime.setTextColor(if (on) Color.parseColor("#B8432F") else Color.WHITE)
         val lp = window.attributes
         lp.screenBrightness = if (on) 0.01f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         window.attributes = lp
+        applyOrientation(resources.configuration)
+        // nachts kurz angetippt: nach 1 Minute wieder nur Uhr
+        main.removeCallbacks(backToNight)
+        if (!on && prefs.getBoolean("autoNight", true) && isNightHour()) main.postDelayed(backToNight, 60_000L)
     }
 
     // ================================================================ Wetter
@@ -455,7 +472,7 @@ class MainActivity : Activity() {
             Locale.US,
             "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f" +
                 "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,is_day" +
-                "&daily=temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=1",
+                "&daily=weather_code,temperature_2m_max,temperature_2m_min,wind_speed_10m_max&timezone=auto&forecast_days=5",
             lat, lon
         )
         io.execute {
@@ -468,15 +485,29 @@ class MainActivity : Activity() {
                 val wind = cur.getDouble("wind_speed_10m")
                 val isDay = cur.optInt("is_day", 1) == 1
                 val daily = j.getJSONObject("daily")
-                val max = daily.getJSONArray("temperature_2m_max").getDouble(0)
-                val min = daily.getJSONArray("temperature_2m_min").getDouble(0)
-                val stand = timeFmt.format(Date())
+                val days = mutableListOf<DayForecast>()
+                val times = daily.getJSONArray("time")
+                val parse = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+                val wd = SimpleDateFormat("EEE", Locale.GERMANY)
+                for (i in 0 until minOf(times.length(), 5)) {
+                    val label = if (i == 0) "Heute" else
+                        (try { wd.format(parse.parse(times.getString(i))!!) } catch (_: Exception) { "" }).trimEnd('.')
+                    days.add(
+                        DayForecast(
+                            label,
+                            daily.getJSONArray("weather_code").optInt(i, -1),
+                            daily.getJSONArray("temperature_2m_max").optDouble(i),
+                            daily.getJSONArray("temperature_2m_min").optDouble(i),
+                            daily.getJSONArray("wind_speed_10m_max").optDouble(i)
+                        )
+                    )
+                }
                 main.post {
                     tvTemp.text = "${Math.round(temp)}°"
                     tvWeatherIcon.text = weatherIcon(code, isDay)
-                    tvWeatherInfo.text = "$place · ${weatherText(code)}\n" +
-                        "gefühlt ${Math.round(feels)}° · ${Math.round(min)}° / ${Math.round(max)}° · " +
-                        "Wind ${Math.round(wind)} km/h · Stand $stand"
+                    tvWeatherInfo.text = "$place · ${weatherText(code)} · gefühlt ${Math.round(feels)}° · " +
+                        "Wind ${Math.round(wind)} km/h"
+                    showForecast(days)
                 }
             } catch (e: Exception) {
                 main.post {
@@ -485,6 +516,30 @@ class MainActivity : Activity() {
                     main.postDelayed(weatherLoop, 60 * 1000L)
                 }
             }
+        }
+    }
+
+    private fun showForecast(days: List<DayForecast>) {
+        forecastRow.removeAllViews()
+        val colW = dp(68).toInt()
+        for (f in days) {
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+            fun line(t: String, sp: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
+                text = t
+                textSize = sp
+                setTextColor(color)
+                gravity = Gravity.CENTER
+                setSingleLine(true)
+                if (bold) setTypeface(typeface, Typeface.BOLD)
+            }
+            col.addView(line(f.label, 12f, Color.parseColor("#AAAAAA")))
+            col.addView(line(weatherIcon(f.code, true), 24f, Color.parseColor("#FFD27A")))
+            col.addView(line("${Math.round(f.max)}° / ${Math.round(f.min)}°", 14f, Color.WHITE))
+            col.addView(line("${Math.round(f.wind)} km/h", 11f, Color.parseColor("#8FB8D8")))
+            forecastRow.addView(col, LinearLayout.LayoutParams(colW, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
     }
 
@@ -523,7 +578,7 @@ class MainActivity : Activity() {
         io.execute {
             val lines = try { queryToday() } catch (_: Exception) { null }
             main.post {
-                if (lines == null) {
+                if (lines == null || night) {
                     tvEvents.visibility = View.GONE
                 } else {
                     tvEvents.text = if (lines.isEmpty()) "Heute keine Termine mehr" else lines.joinToString("\n")
@@ -661,7 +716,7 @@ class MainActivity : Activity() {
     }
 
     private fun updatePlayButton() {
-        btnPlay.text = if (wantPlaying) "■" else "▶"
+        btnPlay.setImageResource(if (wantPlaying) R.drawable.ic_stop else R.drawable.ic_play)
     }
 
     private fun showStationName() {
@@ -1046,10 +1101,10 @@ class MainActivity : Activity() {
                 val m = mins[which]
                 if (m == 0) {
                     sleepAt = 0
-                    btnTimer.text = "Timer"
+                    tvTimerBadge.text = ""
                 } else {
                     sleepAt = System.currentTimeMillis() + m * 60_000L
-                    btnTimer.text = "Timer $m′"
+                    tvTimerBadge.text = "$m′"
                     if (!wantPlaying) playCurrent()
                 }
             }
