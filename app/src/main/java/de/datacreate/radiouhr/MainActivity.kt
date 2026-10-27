@@ -100,6 +100,7 @@ class MainActivity : Activity() {
     private lateinit var tvTimerBadge: TextView
     private lateinit var btnNight: View
     private lateinit var btnSettings: ImageView
+    private lateinit var btnAdd: ImageView
     private lateinit var weatherRow: View
     private lateinit var forecastRow: LinearLayout
     private lateinit var favGrid: LinearLayout
@@ -185,6 +186,8 @@ class MainActivity : Activity() {
         btnNight.setOnClickListener { setNight(!night) }
         btnSettings = findViewById(R.id.btnSettings)
         btnSettings.setOnClickListener { showSettings() }
+        btnAdd = findViewById(R.id.btnAdd)
+        btnAdd.setOnClickListener { showStations() }
         clockPanel.setOnClickListener { setNight(!night) }
         root.setOnClickListener { if (night) setNight(false) }
 
@@ -485,13 +488,15 @@ class MainActivity : Activity() {
         btnTimer.background = btnBg()
         btnNight.background = btnBg()
         btnSettings.background = btnBg()
+        btnAdd.background = btnBg()
+        btnAdd.setColorFilter(if (k.btn == BtnStyle.ROUND) col("#2A2A2A") else k.iconTint)
         val tint = if (k.btn == BtnStyle.ROUND) col("#2A2A2A") else k.iconTint
         btnPlay.setColorFilter(if (k.btn == BtnStyle.ROUND) Color.WHITE else tint)
         timerIcon.setColorFilter(tint)
         (btnNight as ImageView).setColorFilter(tint)
         btnSettings.setColorFilter(tint)
         val ip = if (k.btn == BtnStyle.IVORY) dp(3).toInt() else 0
-        for (v in listOf<View>(btnPlay, btnNight, btnSettings, timerIcon)) {
+        for (v in listOf<View>(btnPlay, btnNight, btnSettings, btnAdd, timerIcon)) {
             v.setPadding(dp(10).toInt(), dp(10).toInt() - ip, dp(10).toInt(), dp(10).toInt() + ip)
         }
 
@@ -1063,18 +1068,20 @@ class MainActivity : Activity() {
 
     /** Senderkacheln mehrzeilig anordnen. */
     private fun fillGrid(views: List<View>, cols: Int, itemH: Int) {
+        val cellW = panelWidthPx() / cols
         var row: LinearLayout? = null
         views.forEachIndexed { n, v ->
             if (n % cols == 0) {
-                row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_HORIZONTAL
+                }
                 favGrid.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
-            row?.addView(v, LinearLayout.LayoutParams(0, itemH, 1f).apply {
+            row?.addView(v, LinearLayout.LayoutParams(cellW - dp(4).toInt(), itemH).apply {
                 setMargins(dp(2).toInt(), dp(3).toInt(), dp(2).toInt(), dp(3).toInt())
             })
         }
-        val rest = (cols - views.size % cols) % cols
-        if (views.size > cols) repeat(rest) { row?.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) }
     }
 
     private fun buildFavorites() {
@@ -1090,8 +1097,7 @@ class MainActivity : Activity() {
                 val size = dp(72).toInt()
                 val views = mutableListOf<View>()
                 stations.forEachIndexed { i, s -> views.add(favItem(i, s, size, 13f, active)) }
-                views.add(addTile(size, 13f))
-                fillGrid(views, maxOf(1, panelWidthPx() / dp(92).toInt()), ViewGroup.LayoutParams.WRAP_CONTENT)
+                fillGrid(views, maxOf(1, panelWidthPx() / dp(92).toInt()), dp(122).toInt())
                 return
             }
             Presets.KEYS -> {
@@ -1105,37 +1111,15 @@ class MainActivity : Activity() {
                     }
                     views.add(key)
                 }
-                val plus = ivoryKey("＋", false)
-                plus.textSize = 20f
-                plus.setOnClickListener { showStations() }
-                views.add(plus)
                 fillGrid(views, maxOf(1, panelWidthPx() / dp(88).toInt()), dp(74).toInt())
                 return
             }
             Presets.GRID -> {
-                val cols = 4
                 val views = mutableListOf<View>()
                 stations.forEachIndexed { i, s -> views.add(keypadKey(i, s, i == active && wantPlaying)) }
-                views.add(addTile(dp(58).toInt(), 12f))
-                var row: LinearLayout? = null
-                views.forEachIndexed { n, v ->
-                    if (n % cols == 0) {
-                        row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-                        favGrid.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-                    }
-                    row?.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        setMargins(dp(3).toInt(), dp(3).toInt(), dp(3).toInt(), dp(3).toInt())
-                    })
-                }
-                val rest = (cols - views.size % cols) % cols
-                repeat(rest) { row?.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) }
+                fillGrid(views, 4, dp(128).toInt())
                 return
             }
-        }
-        favScroll.post {
-            val child = favRow.getChildAt(active) ?: return@post
-            val target = child.left - (favScroll.width - child.width) / 2
-            favScroll.smoothScrollTo(maxOf(0, target), 0)
         }
     }
 
