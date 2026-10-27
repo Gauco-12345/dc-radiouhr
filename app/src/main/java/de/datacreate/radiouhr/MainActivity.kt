@@ -159,10 +159,7 @@ class MainActivity : Activity() {
         timerIcon = findViewById(R.id.timerIcon)
         clockView = findViewById(R.id.clockView)
         dialView = findViewById(R.id.dialView)
-        dialView.onPick = { i ->
-            current = i
-            playCurrent()
-        }
+        dialView.onPick = { i -> stationClick(i) }
         clockView.setOnClickListener { setNight(!night) }
         skin = Skins.byId(prefs.getString("skin", "standard"))
 
@@ -171,6 +168,11 @@ class MainActivity : Activity() {
         loadStations()
 
         btnPlay.setOnClickListener { if (wantPlaying) stopRadio() else playCurrent() }
+        tvStation.setOnClickListener { if (wantPlaying) stopRadio() else playCurrent() }
+        tvStation.setOnLongClickListener {
+            showStations()
+            true
+        }
         knob = findViewById(R.id.knob)
         knob.onChange = { v ->
             val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
@@ -277,21 +279,24 @@ class MainActivity : Activity() {
                 leftMargin = dp(8).toInt()
             }
             val panelW = dm.widthPixels * 0.55f
-            ts = skin.clockScale * (if (night) minOf(dm.widthPixels / 3.0f, dm.heightPixels * 0.6f)
-            else minOf(panelW / 3.0f, dm.heightPixels * 0.26f))
-            availH = dm.heightPixels * 0.85f
+            ts = skin.clockScale * (if (night) minOf(dm.widthPixels / 2.8f, dm.heightPixels * 0.66f)
+            else minOf(panelW / 2.7f, dm.heightPixels * 0.36f))
+            availH = dm.heightPixels * (if (night) 0.92f else 0.86f)
         } else {
             root.orientation = LinearLayout.VERTICAL
             clockPanel.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
             radioPanel.layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(8).toInt() }
-            ts = skin.clockScale * dm.widthPixels / (if (night) 2.9f else 3.4f)
-            availH = dm.heightPixels * (if (night) 0.8f else 0.42f)
+            ts = skin.clockScale * dm.widthPixels / (if (night) 2.55f else 2.8f)
+            availH = dm.heightPixels * (if (night) 0.85f else 0.5f)
         }
         tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, ts)
-        val analog = skin.clock == ClockStyle.ANALOG_BRAUN || skin.clock == ClockStyle.ANALOG_WOOD
-        val ch = if (analog) minOf(ts * (if (night) 2.0f else 1.75f), availH) else minOf(ts * 1.2f, availH)
+        val ch = when (skin.clock) {
+            ClockStyle.CUCKOO -> availH
+            ClockStyle.ANALOG_BRAUN, ClockStyle.ANALOG_WOOD -> minOf(ts * 2.1f, availH)
+            else -> minOf(ts * 1.3f, availH)
+        }
         clockView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ch.toInt())
     }
 
@@ -412,7 +417,7 @@ class MainActivity : Activity() {
         clockView.visibility = vis(drawn)
         clockView.style = k.clock
         clockView.litColor = if (on) Color.parseColor("#B8432F") else k.fg
-        clockView.alpha = if (on && (k.clock == ClockStyle.ANALOG_BRAUN || k.clock == ClockStyle.FLIP)) 0.3f
+        clockView.alpha = if (on && (k.clock == ClockStyle.ANALOG_BRAUN || k.clock == ClockStyle.FLIP || k.clock == ClockStyle.CUCKOO)) 0.35f
         else if (on) 0.6f else 1f
         tvTime.typeface = Typeface.create(k.clockFamily, k.clockStyle)
         if (k.textGlow && !on) tvTime.setShadowLayer(dp(14), 0f, 0f, k.accent) else tvTime.setShadowLayer(0f, 0f, 0f, 0)
@@ -859,7 +864,7 @@ class MainActivity : Activity() {
         player.stop()
         tvNowPlaying.text = ""
         updatePlayButton()
-        buildFavorites()
+        showStationName()
     }
 
     private fun step(dir: Int) {
@@ -877,7 +882,7 @@ class MainActivity : Activity() {
 
     private fun showStationName() {
         tvStation.text = if (stations.isEmpty()) "Keine Sender – tippe auf ＋"
-        else stations[current.coerceIn(0, stations.size - 1)].name
+        else (if (wantPlaying) "" else "▶  ") + stations[current.coerceIn(0, stations.size - 1)].name
         buildFavorites()
     }
 

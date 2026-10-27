@@ -4,7 +4,7 @@ import android.graphics.Color
 import android.graphics.Typeface
 
 enum class Presets { ROW, GRID, KEYS, NONE }
-enum class ClockStyle { TEXT, NIXIE, SEGMENT, FLIP, ANALOG_BRAUN, ANALOG_WOOD }
+enum class ClockStyle { TEXT, NIXIE, SEGMENT, FLIP, ANALOG_BRAUN, ANALOG_WOOD, CUCKOO }
 enum class BtnStyle { FLAT, IVORY, KEYPAD, LCD, NEON, GLASS, ROUND, WOOD, NONE }
 enum class KnobStyle { MODERN, BAKELITE, LED, NEON, THIN, BRAUN, WOOD, GLASS }
 enum class BgStyle { PLAIN, WOOD, DARKWOOD, METAL, SYNTH, WAVES }
@@ -113,11 +113,11 @@ object Skins {
             iconTint = col("#E6F4FF")
         ),
         Skin(
-            "schwarzwald", "Schwarzwald", "Kuckucksuhr-Zifferblatt, Holztasten",
+            "schwarzwald", "Schwarzwald", "große Kuckucksuhr mit Pendel, Holztasten",
             col("#3B2414"), col("#160C05"), col("#F3E9D2"), col("#CDB68F"), col("#D3202F"), col("#F3C969"), col("#B9D3A8"),
             col("#1E3A27"), col("#4C6B4F"), col("#2D5238"), 6f, col("#3A2412"), col("#66CDB68F"),
             clockFamily = "serif", textFamily = "serif",
-            clock = ClockStyle.ANALOG_WOOD, btn = BtnStyle.WOOD, knob = KnobStyle.WOOD, bg = BgStyle.DARKWOOD,
+            clock = ClockStyle.CUCKOO, btn = BtnStyle.WOOD, knob = KnobStyle.WOOD, bg = BgStyle.DARKWOOD,
             iconTint = col("#F3E9D2")
         )
     )
