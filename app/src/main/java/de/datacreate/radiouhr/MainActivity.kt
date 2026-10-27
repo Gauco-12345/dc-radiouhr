@@ -102,6 +102,8 @@ class MainActivity : Activity() {
     private lateinit var forecastRow: LinearLayout
     private lateinit var favGrid: LinearLayout
     private lateinit var timerIcon: ImageView
+    private lateinit var clockView: ClockView
+    private lateinit var dialView: DialView
     private lateinit var skin: Skin
     private var lastForecast: List<DayForecast> = emptyList()
     private lateinit var knob: KnobView
@@ -155,6 +157,13 @@ class MainActivity : Activity() {
         forecastRow = findViewById(R.id.forecastRow)
         favGrid = findViewById(R.id.favGrid)
         timerIcon = findViewById(R.id.timerIcon)
+        clockView = findViewById(R.id.clockView)
+        dialView = findViewById(R.id.dialView)
+        dialView.onPick = { i ->
+            current = i
+            playCurrent()
+        }
+        clockView.setOnClickListener { setNight(!night) }
         skin = Skins.byId(prefs.getString("skin", "standard"))
 
 
@@ -259,24 +268,31 @@ class MainActivity : Activity() {
 
     private fun applyOrientation(cfg: Configuration) {
         val dm = resources.displayMetrics
+        val ts: Float
+        val availH: Float
         if (cfg.orientation == Configuration.ORIENTATION_LANDSCAPE) {
             root.orientation = LinearLayout.HORIZONTAL
             clockPanel.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1.3f)
-            radioPanel.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+            radioPanel.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                leftMargin = dp(8).toInt()
+            }
             val panelW = dm.widthPixels * 0.55f
-            tvTime.setTextSize(
-                TypedValue.COMPLEX_UNIT_PX,
-                skin.clockScale * (if (night) minOf(dm.widthPixels / 3.0f, dm.heightPixels * 0.6f)
-                else minOf(panelW / 3.0f, dm.heightPixels * 0.26f))
-            )
+            ts = skin.clockScale * (if (night) minOf(dm.widthPixels / 3.0f, dm.heightPixels * 0.6f)
+            else minOf(panelW / 3.0f, dm.heightPixels * 0.26f))
+            availH = dm.heightPixels * 0.85f
         } else {
             root.orientation = LinearLayout.VERTICAL
             clockPanel.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
             radioPanel.layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, skin.clockScale * dm.widthPixels / (if (night) 2.9f else 3.4f))
+            ).apply { topMargin = dp(8).toInt() }
+            ts = skin.clockScale * dm.widthPixels / (if (night) 2.9f else 3.4f)
+            availH = dm.heightPixels * (if (night) 0.8f else 0.42f)
         }
+        tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, ts)
+        val analog = skin.clock == ClockStyle.ANALOG_BRAUN || skin.clock == ClockStyle.ANALOG_WOOD
+        val ch = if (analog) minOf(ts * (if (night) 2.0f else 1.75f), availH) else minOf(ts * 1.2f, availH)
+        clockView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ch.toInt())
     }
 
     private fun dp(v: Int): Float = v * resources.displayMetrics.density
@@ -290,6 +306,7 @@ class MainActivity : Activity() {
             tvDate.text = dateFmt.format(now)
 
             val cal = Calendar.getInstance()
+            clockView.setTime(cal)
             val minute = cal.get(Calendar.MINUTE)
             if (minute != lastMinute) {
                 val first = lastMinute == -1
@@ -368,31 +385,80 @@ class MainActivity : Activity() {
         setStroke(maxOf(1, dp(1).toInt()), stroke)
     }
 
-    private fun btnBg(): StateListDrawable = StateListDrawable().apply {
-        addState(intArrayOf(android.R.attr.state_pressed), shape(skin.btnPressed, skin.btnStroke))
-        addState(intArrayOf(), shape(skin.btnFill, skin.btnStroke))
+    private fun btnBg(primary: Boolean = false, style: BtnStyle = skin.btn, latched: Boolean = false): StateListDrawable {
+        val den = resources.displayMetrics.density
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), ButtonDrawable(style, skin, true, primary, den))
+            addState(intArrayOf(), ButtonDrawable(style, skin, latched, primary, den))
+        }
     }
 
     /** Design (Skin) und Tag/Nacht auf alle Elemente anwenden. */
     private fun applyLook() {
         val k = skin
         val on = night
-        root.background = if (on) ColorDrawable(Color.BLACK)
-        else GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(k.bgTop, k.bgBottom))
+        val den = resources.displayMetrics.density
+        root.background = if (on) ColorDrawable(Color.BLACK) else BgDrawable(k.bg, k, den)
+        clockPanel.background = if (on || k.clockPanel == PanelStyle.NONE) null else PanelDrawable(k.clockPanel, k, den)
+        radioPanel.background = if (k.radioPanel == PanelStyle.NONE) null else PanelDrawable(k.radioPanel, k, den)
+        val cp = if (!on && k.clockPanel != PanelStyle.NONE) dp(16).toInt() else 0
+        clockPanel.setPadding(cp, cp, cp, cp)
+        val rp = if (k.radioPanel != PanelStyle.NONE) dp(12).toInt() else 0
+        radioPanel.setPadding(rp, rp, rp, rp)
 
+        // Uhr
+        val drawn = k.clock != ClockStyle.TEXT
+        tvTime.visibility = vis(!drawn)
+        clockView.visibility = vis(drawn)
+        clockView.style = k.clock
+        clockView.litColor = if (on) Color.parseColor("#B8432F") else k.fg
+        clockView.alpha = if (on && (k.clock == ClockStyle.ANALOG_BRAUN || k.clock == ClockStyle.FLIP)) 0.3f
+        else if (on) 0.6f else 1f
         tvTime.typeface = Typeface.create(k.clockFamily, k.clockStyle)
+        if (k.textGlow && !on) tvTime.setShadowLayer(dp(14), 0f, 0f, k.accent) else tvTime.setShadowLayer(0f, 0f, 0f, 0)
+
         val tf = Typeface.create(k.textFamily, Typeface.NORMAL)
         tvTemp.typeface = tf
         tvDate.typeface = tf
+        tvWeatherInfo.typeface = tf
+        tvEvents.typeface = tf
         tvTime.setTextColor(if (on) Color.parseColor("#B8432F") else k.fg)
         tvTemp.setTextColor(k.fg)
-        tvStation.setTextColor(k.fg)
         tvDate.setTextColor(k.sub)
         tvWeatherInfo.setTextColor(k.sub)
         tvNowPlaying.setTextColor(k.sub)
         tvEvents.setTextColor(k.fg)
         tvWeatherIcon.setTextColor(k.icon)
-        tvTimerBadge.setTextColor(k.accent)
+        tvTimerBadge.setTextColor(if (k.btn == BtnStyle.IVORY || k.btn == BtnStyle.ROUND) col("#B5300B") else k.accent)
+        if (k.textGlow) {
+            tvTemp.setShadowLayer(dp(8), 0f, 0f, k.accent)
+        } else {
+            tvTemp.setShadowLayer(0f, 0f, 0f, 0)
+        }
+
+        // Sender-Anzeige
+        dialView.visibility = vis(k.station == StationStyle.DIAL)
+        tvStation.visibility = vis(k.station != StationStyle.DIAL)
+        if (k.station == StationStyle.LCD) {
+            tvStation.typeface = Typeface.create("monospace", Typeface.BOLD)
+            tvStation.isAllCaps = true
+            tvStation.setTextColor(k.accent)
+            tvStation.setShadowLayer(dp(4), 0f, 0f, k.accent)
+            tvStation.background = GradientDrawable().apply {
+                cornerRadius = dp(6)
+                setColor(k.lcdScreen)
+                setStroke(dp(2).toInt(), col("#000000"))
+            }
+            val pd = dp(8).toInt()
+            tvStation.setPadding(pd, pd / 2, pd, pd / 2)
+        } else {
+            tvStation.typeface = Typeface.create(k.textFamily, Typeface.BOLD)
+            tvStation.isAllCaps = false
+            tvStation.setTextColor(k.fg)
+            tvStation.setShadowLayer(if (k.textGlow) dp(6) else 0f, 0f, 0f, if (k.textGlow) k.accent else 0)
+            tvStation.background = null
+            tvStation.setPadding(0, 0, 0, 0)
+        }
 
         radioPanel.visibility = vis(!on)
         tvDate.visibility = vis(!on)
@@ -400,17 +466,28 @@ class MainActivity : Activity() {
         tvWeatherInfo.visibility = vis(!on && k.details)
         forecastRow.visibility = vis(!on && k.forecast)
         tvNowPlaying.visibility = vis(k.details)
-        favScroll.visibility = vis(k.presets == Presets.ROW)
+        favScroll.visibility = vis(k.presets == Presets.ROW || k.presets == Presets.KEYS)
         favGrid.visibility = vis(k.presets == Presets.GRID)
         btnTimer.visibility = vis(k.extraButtons)
         btnNight.visibility = vis(k.extraButtons)
         if (on || !k.events) tvEvents.visibility = View.GONE else loadEvents()
 
-        for (v in listOf<View>(btnPlay, btnTimer, btnNight, btnSettings)) v.background = btnBg()
-        btnPlay.setColorFilter(k.fg)
-        timerIcon.setColorFilter(k.fg)
-        (btnNight as ImageView).setColorFilter(k.fg)
-        btnSettings.setColorFilter(k.fg)
+        // Tasten
+        btnPlay.background = btnBg(primary = true)
+        btnTimer.background = btnBg()
+        btnNight.background = btnBg()
+        btnSettings.background = btnBg()
+        val tint = if (k.btn == BtnStyle.ROUND) col("#2A2A2A") else k.iconTint
+        btnPlay.setColorFilter(if (k.btn == BtnStyle.ROUND) Color.WHITE else tint)
+        timerIcon.setColorFilter(tint)
+        (btnNight as ImageView).setColorFilter(tint)
+        btnSettings.setColorFilter(tint)
+        val ip = if (k.btn == BtnStyle.IVORY) dp(4).toInt() else 0
+        for (v in listOf<View>(btnPlay, btnNight, btnSettings)) {
+            v.setPadding(dp(14).toInt(), dp(14).toInt() - ip, dp(14).toInt(), dp(14).toInt() + ip)
+        }
+
+        knob.style = k.knob
         knob.accent = k.accent
         knob.bodyColor = k.knobBody
         knob.trackColor = k.knobTrack
@@ -821,22 +898,24 @@ class MainActivity : Activity() {
         return palette[(name.hashCode() and 0x7fffffff) % palette.size]
     }
 
-    private fun favItem(i: Int, s: Station, size: Int, captionSp: Float, active: Int): View {
-        val item = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            val p = dp(4).toInt()
-            setPadding(p, p, p, p)
+    private fun stationClick(i: Int) {
+        if (i == current && wantPlaying) stopRadio() else {
+            current = i
+            playCurrent()
         }
+    }
+
+    private fun logoView(s: Station, size: Int): View {
         val bmp = icons[s.url]
-        val iconView: View = if (bmp != null) {
+        val rad = dp(1) * minOf(skin.corner, 16f)
+        val v: View = if (bmp != null) {
             ImageView(this).apply {
                 setImageBitmap(bmp)
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 val p = size / 10
                 setPadding(p, p, p, p)
                 background = GradientDrawable().apply {
-                    cornerRadius = dp(1) * minOf(skin.corner, 16f)
+                    cornerRadius = rad
                     setColor(Color.WHITE)
                 }
             }
@@ -846,18 +925,30 @@ class MainActivity : Activity() {
                 gravity = Gravity.CENTER
                 setTextColor(Color.WHITE)
                 setTypeface(typeface, Typeface.BOLD)
-                textSize = if (size > dp(60)) 17f else 14f
+                textSize = if (size > dp(56)) 16f else 13f
                 background = GradientDrawable().apply {
-                    cornerRadius = dp(1) * minOf(skin.corner, 16f)
+                    cornerRadius = rad
                     setColor(colorFor(s.name))
                 }
             }
         }
+        v.clipToOutline = true
+        return v
+    }
+
+    /** Kachel mit Logo (Designs mit Senderleiste). */
+    private fun favItem(i: Int, s: Station, size: Int, captionSp: Float, active: Int): View {
+        val item = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            val p = dp(4).toInt()
+            setPadding(p, p, p, p)
+        }
+        val iconView = logoView(s, size)
         if (i == active) {
             val bg = iconView.background
             if (bg is GradientDrawable) bg.setStroke(dp(3).toInt(), if (wantPlaying) skin.accent else skin.sub)
         }
-        iconView.clipToOutline = true
         item.addView(iconView, LinearLayout.LayoutParams(size, size))
         item.addView(TextView(this).apply {
             text = s.name
@@ -867,17 +958,60 @@ class MainActivity : Activity() {
             setSingleLine(true)
             ellipsize = TextUtils.TruncateAt.END
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        item.setOnClickListener {
-            if (i == current && wantPlaying) stopRadio() else {
-                current = i
-                playCurrent()
-            }
-        }
+        item.setOnClickListener { stationClick(i) }
         item.setOnLongClickListener {
             confirmRemove(i)
             true
         }
         return item
+    }
+
+    /** Elfenbein-Stationstaste (Retro): die gewählte Taste bleibt eingerastet. */
+    private fun ivoryKey(label: String, latched: Boolean): TextView = TextView(this).apply {
+        text = label
+        gravity = Gravity.CENTER
+        textSize = 12f
+        maxLines = 2
+        ellipsize = TextUtils.TruncateAt.END
+        typeface = Typeface.create("serif", Typeface.BOLD)
+        setTextColor(if (latched) col("#7A1010") else col("#3B2A1A"))
+        background = btnBg(style = BtnStyle.IVORY, latched = latched)
+        val p = dp(4).toInt()
+        setPadding(p, p, p, p + dp(5).toInt())
+    }
+
+    /** Autoradio-Taste mit Speicherplatz-Nummer. */
+    private fun keypadKey(i: Int, s: Station, active: Boolean): View {
+        val key = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = btnBg(style = BtnStyle.KEYPAD, latched = active)
+            val p = dp(6).toInt()
+            setPadding(p, p, p, p + dp(4).toInt())
+        }
+        key.addView(TextView(this).apply {
+            text = (i + 1).toString()
+            textSize = 13f
+            typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
+            setTextColor(if (active) skin.accent else col("#9AA3AD"))
+            gravity = Gravity.CENTER
+        })
+        val size = dp(46).toInt()
+        key.addView(logoView(s, size), LinearLayout.LayoutParams(size, size))
+        key.addView(TextView(this).apply {
+            text = s.name
+            textSize = 11f
+            setTextColor(if (active) Color.WHITE else col("#C8CDD3"))
+            gravity = Gravity.CENTER
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        key.setOnClickListener { stationClick(i) }
+        key.setOnLongClickListener {
+            confirmRemove(i)
+            true
+        }
+        return key
     }
 
     private fun addTile(size: Int, captionSp: Float): View {
@@ -892,8 +1026,8 @@ class MainActivity : Activity() {
             text = "＋"
             gravity = Gravity.CENTER
             textSize = 24f
-            setTextColor(skin.fg)
-            background = shape(skin.btnFill, skin.btnStroke)
+            setTextColor(skin.iconTint)
+            background = btnBg()
         }, LinearLayout.LayoutParams(size, size))
         add.addView(TextView(this).apply {
             text = "Sender"
@@ -909,6 +1043,7 @@ class MainActivity : Activity() {
         favRow.removeAllViews()
         favGrid.removeAllViews()
         val active = current.coerceIn(0, maxOf(0, stations.size - 1))
+        dialView.setStations(stations.map { it.name }, active, wantPlaying)
 
         when (skin.presets) {
             Presets.NONE -> return
@@ -919,29 +1054,48 @@ class MainActivity : Activity() {
                     favRow.addView(favItem(i, s, size, 11f, active), LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
                 }
                 favRow.addView(addTile(size, 11f), LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
-                favScroll.post {
-                    val child = favRow.getChildAt(active) ?: return@post
-                    val target = child.left - (favScroll.width - child.width) / 2
-                    favScroll.smoothScrollTo(maxOf(0, target), 0)
+            }
+            Presets.KEYS -> {
+                val keyW = dp(74).toInt()
+                val keyH = dp(62).toInt()
+                stations.forEachIndexed { i, s ->
+                    val key = ivoryKey(s.name, i == active && wantPlaying)
+                    key.setOnClickListener { stationClick(i) }
+                    key.setOnLongClickListener {
+                        confirmRemove(i)
+                        true
+                    }
+                    favRow.addView(key, LinearLayout.LayoutParams(keyW, keyH).apply { setMargins(dp(2).toInt(), 0, dp(2).toInt(), 0) })
                 }
+                val plus = ivoryKey("＋", false)
+                plus.textSize = 20f
+                plus.setOnClickListener { showStations() }
+                favRow.addView(plus, LinearLayout.LayoutParams(dp(50).toInt(), keyH).apply { setMargins(dp(2).toInt(), 0, dp(2).toInt(), 0) })
             }
             Presets.GRID -> {
                 val cols = 4
-                val size = dp(66).toInt()
                 val views = mutableListOf<View>()
-                stations.forEachIndexed { i, s -> views.add(favItem(i, s, size, 13f, active)) }
-                views.add(addTile(size, 13f))
+                stations.forEachIndexed { i, s -> views.add(keypadKey(i, s, i == active && wantPlaying)) }
+                views.add(addTile(dp(46).toInt(), 11f))
                 var row: LinearLayout? = null
                 views.forEachIndexed { n, v ->
                     if (n % cols == 0) {
                         row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
                         favGrid.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                     }
-                    row?.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    row?.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                        setMargins(dp(3).toInt(), dp(3).toInt(), dp(3).toInt(), dp(3).toInt())
+                    })
                 }
                 val rest = (cols - views.size % cols) % cols
                 repeat(rest) { row?.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) }
+                return
             }
+        }
+        favScroll.post {
+            val child = favRow.getChildAt(active) ?: return@post
+            val target = child.left - (favScroll.width - child.width) / 2
+            favScroll.smoothScrollTo(maxOf(0, target), 0)
         }
     }
 

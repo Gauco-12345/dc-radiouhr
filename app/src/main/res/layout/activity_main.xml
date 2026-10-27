@@ -26,6 +26,12 @@
             android:textColor="#FFFFFF"
             android:textSize="96sp" />
 
+        <de.datacreate.radiouhr.ClockView
+            android:id="@+id/clockView"
+            android:layout_width="match_parent"
+            android:layout_height="120dp"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/tvDate"
             android:layout_width="wrap_content"
@@ -92,6 +98,13 @@
         android:layout_height="wrap_content"
         android:gravity="center"
         android:orientation="vertical">
+
+        <de.datacreate.radiouhr.DialView
+            android:id="@+id/dialView"
+            android:layout_width="match_parent"
+            android:layout_height="78dp"
+            android:layout_marginBottom="4dp"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/tvStation"

@@ -3,7 +3,15 @@ package de.datacreate.radiouhr
 import android.graphics.Color
 import android.graphics.Typeface
 
-enum class Presets { ROW, GRID, NONE }
+enum class Presets { ROW, GRID, KEYS, NONE }
+enum class ClockStyle { TEXT, NIXIE, SEGMENT, FLIP, ANALOG_BRAUN, ANALOG_WOOD }
+enum class BtnStyle { FLAT, IVORY, KEYPAD, LCD, NEON, GLASS, ROUND, WOOD, NONE }
+enum class KnobStyle { MODERN, BAKELITE, LED, NEON, THIN, BRAUN, WOOD, GLASS }
+enum class BgStyle { PLAIN, WOOD, DARKWOOD, METAL, SYNTH, WAVES }
+enum class PanelStyle { NONE, GRILLE, BEZEL, GLASS }
+enum class StationStyle { TEXT, DIAL, LCD }
+
+fun col(s: String): Int = Color.parseColor(s)
 
 data class Skin(
     val id: String,
@@ -30,63 +38,87 @@ data class Skin(
     val forecast: Boolean = true,
     val events: Boolean = true,
     val details: Boolean = true,
-    val extraButtons: Boolean = true
+    val extraButtons: Boolean = true,
+    // ---- Gestaltung über die Farben hinaus
+    val clock: ClockStyle = ClockStyle.TEXT,
+    val btn: BtnStyle = BtnStyle.FLAT,
+    val knob: KnobStyle = KnobStyle.MODERN,
+    val bg: BgStyle = BgStyle.PLAIN,
+    val clockPanel: PanelStyle = PanelStyle.NONE,
+    val radioPanel: PanelStyle = PanelStyle.NONE,
+    val station: StationStyle = StationStyle.TEXT,
+    val iconTint: Int = Color.WHITE,
+    val lcdScreen: Int = col("#101010"),
+    val textGlow: Boolean = false
 )
 
 object Skins {
-    private fun c(s: String) = Color.parseColor(s)
-
     val all = listOf(
         Skin(
             "standard", "Standard", "schlicht dunkel",
-            c("#000000"), c("#000000"), c("#FFFFFF"), c("#AAAAAA"), c("#FF8A3D"), c("#FFD27A"), c("#8FB8D8"),
-            c("#14FFFFFF"), c("#33FFFFFF"), c("#33FFFFFF"), 14f, c("#1C1C1C"), c("#33FFFFFF")
+            col("#000000"), col("#000000"), col("#FFFFFF"), col("#AAAAAA"), col("#FF8A3D"), col("#FFD27A"), col("#8FB8D8"),
+            col("#14FFFFFF"), col("#33FFFFFF"), col("#33FFFFFF"), 14f, col("#1C1C1C"), col("#33FFFFFF")
         ),
         Skin(
-            "retro", "Retro", "Röhrenradio, Holz & Bernstein",
-            c("#3A2314"), c("#140A04"), c("#FFB347"), c("#C99A6B"), c("#FF7A1A"), c("#FFC870"), c("#D9A066"),
-            c("#2A1A0E"), c("#B8873B"), c("#4A2E18"), 4f, c("#2A1A0E"), c("#55B8873B"),
-            clockFamily = "monospace", clockStyle = Typeface.BOLD, textFamily = "serif", clockScale = 0.82f
+            "retro", "Retro", "Röhrenradio: Holz, Nixie-Röhren, Senderskala, Elfenbeintasten",
+            col("#5A3519"), col("#2A160A"), col("#F3E3C3"), col("#D8B98A"), col("#FF8A2A"), col("#FFC870"), col("#E8C89A"),
+            col("#2A1A0E"), col("#B8873B"), col("#4A2E18"), 5f, col("#2A1A0E"), col("#AAD8B98A"),
+            textFamily = "serif",
+            presets = Presets.KEYS,
+            clock = ClockStyle.NIXIE, btn = BtnStyle.IVORY, knob = KnobStyle.BAKELITE, bg = BgStyle.WOOD,
+            radioPanel = PanelStyle.GRILLE, station = StationStyle.DIAL, iconTint = col("#3B2A1A")
         ),
         Skin(
-            "speicher", "Großer Senderspeicher", "große Stationstasten statt Vorhersage",
-            c("#10161D"), c("#000000"), c("#FFFFFF"), c("#9AA7B4"), c("#3DA5FF"), c("#FFD27A"), c("#8FB8D8"),
-            c("#1AFFFFFF"), c("#33FFFFFF"), c("#403DA5FF"), 16f, c("#1C232B"), c("#333DA5FF"),
-            clockScale = 0.72f, presets = Presets.GRID, forecast = false, events = false
+            "speicher", "Großer Senderspeicher", "Autoradio: Klappziffern, Gummitasten, Bernstein-Display",
+            col("#2B3036"), col("#0E1013"), col("#F0F0F0"), col("#9AA3AD"), col("#FFB000"), col("#FFD27A"), col("#8FB8D8"),
+            col("#1AFFFFFF"), col("#33FFFFFF"), col("#40FFB000"), 10f, col("#1C2026"), col("#33FFB000"),
+            clockScale = 0.8f, presets = Presets.GRID, forecast = false, events = false,
+            clock = ClockStyle.FLIP, btn = BtnStyle.KEYPAD, knob = KnobStyle.LED, bg = BgStyle.METAL,
+            station = StationStyle.LCD, iconTint = col("#E6E6E6"), lcdScreen = col("#1A1206")
         ),
         Skin(
             "minimal", "Minimal", "nur Uhr, Temperatur, Play",
-            c("#000000"), c("#000000"), c("#EEEEEE"), c("#777777"), c("#FFFFFF"), c("#EEEEEE"), c("#777777"),
-            c("#00000000"), c("#33FFFFFF"), c("#22FFFFFF"), 28f, c("#000000"), c("#22FFFFFF"),
-            presets = Presets.NONE, forecast = false, events = false, details = false, extraButtons = false
+            col("#000000"), col("#000000"), col("#EEEEEE"), col("#777777"), col("#FFFFFF"), col("#EEEEEE"), col("#777777"),
+            col("#00000000"), col("#33FFFFFF"), col("#22FFFFFF"), 28f, col("#000000"), col("#22FFFFFF"),
+            presets = Presets.NONE, forecast = false, events = false, details = false, extraButtons = false,
+            btn = BtnStyle.NONE, knob = KnobStyle.THIN, iconTint = col("#DDDDDD")
         ),
         Skin(
-            "lcd", "Digitalwecker", "grüne LCD-Anzeige",
-            c("#0B1A0B"), c("#020602"), c("#8CFF5A"), c("#4E9A34"), c("#8CFF5A"), c("#8CFF5A"), c("#5FBF40"),
-            c("#0F240F"), c("#2E6B22"), c("#1E3E16"), 6f, c("#0A170A"), c("#332E6B22"),
-            clockFamily = "monospace", textFamily = "monospace", clockScale = 0.85f
+            "lcd", "Digitalwecker", "7-Segment-Anzeige, LCD-Tasten, LED-Lautstärke",
+            col("#101410"), col("#030503"), col("#8CFF5A"), col("#4E9A34"), col("#8CFF5A"), col("#8CFF5A"), col("#5FBF40"),
+            col("#0F240F"), col("#2E6B22"), col("#1E3E16"), 3f, col("#0A170A"), col("#332E6B22"),
+            textFamily = "monospace",
+            clock = ClockStyle.SEGMENT, btn = BtnStyle.LCD, knob = KnobStyle.LED,
+            clockPanel = PanelStyle.BEZEL, station = StationStyle.LCD, iconTint = col("#8CFF5A"),
+            lcdScreen = col("#061206")
         ),
         Skin(
-            "hell", "Hell", "heller Hintergrund für tagsüber",
-            c("#F4F1EA"), c("#E2DBCD"), c("#1E1E1E"), c("#6B6458"), c("#E8572A"), c("#E8952A"), c("#3A6E98"),
-            c("#FFFFFF"), c("#22000000"), c("#15000000"), 16f, c("#FFFFFF"), c("#22000000"),
-            clockFamily = "sans-serif-light"
+            "hell", "Bauhaus hell", "Zeiger-Uhr im 60er-Design, runde Tasten",
+            col("#EEEBE4"), col("#DAD5CA"), col("#1E1E1E"), col("#6B6458"), col("#F08A00"), col("#E8952A"), col("#3A6E98"),
+            col("#FFFFFF"), col("#22000000"), col("#15000000"), 26f, col("#F4F3EF"), col("#33000000"),
+            clockFamily = "sans-serif-light",
+            clock = ClockStyle.ANALOG_BRAUN, btn = BtnStyle.ROUND, knob = KnobStyle.BRAUN, iconTint = col("#2A2A2A")
         ),
         Skin(
-            "neon", "Neon", "Synthwave in Pink & Türkis",
-            c("#1B0A33"), c("#06020E"), c("#39F3FF"), c("#C77DFF"), c("#FF2BD6"), c("#FFE45C"), c("#39F3FF"),
-            c("#1AFF2BD6"), c("#88FF2BD6"), c("#44FF2BD6"), 12f, c("#140726"), c("#44FF2BD6")
+            "neon", "Neon", "leuchtende Konturen, Synthwave-Horizont",
+            col("#1B0A33"), col("#06020E"), col("#39F3FF"), col("#C77DFF"), col("#FF2BD6"), col("#FFE45C"), col("#39F3FF"),
+            col("#1AFF2BD6"), col("#88FF2BD6"), col("#44FF2BD6"), 12f, col("#140726"), col("#44FF2BD6"),
+            btn = BtnStyle.NEON, knob = KnobStyle.NEON, bg = BgStyle.SYNTH, iconTint = col("#39F3FF"), textGlow = true
         ),
         Skin(
-            "ozean", "Ozean", "tiefes Blau",
-            c("#0A2540"), c("#020D19"), c("#E6F4FF"), c("#8DB8D9"), c("#2EC4E6"), c("#FFD27A"), c("#7FD1E8"),
-            c("#1A2EC4E6"), c("#552EC4E6"), c("#402EC4E6"), 20f, c("#0A1E33"), c("#332EC4E6")
+            "ozean", "Ozean", "Glas-Optik über Wellen",
+            col("#0D3557"), col("#020D19"), col("#E6F4FF"), col("#8DB8D9"), col("#2EC4E6"), col("#FFD27A"), col("#7FD1E8"),
+            col("#1AFFFFFF"), col("#44FFFFFF"), col("#33FFFFFF"), 22f, col("#0A1E33"), col("#332EC4E6"),
+            btn = BtnStyle.GLASS, knob = KnobStyle.GLASS, bg = BgStyle.WAVES, radioPanel = PanelStyle.GLASS,
+            iconTint = col("#E6F4FF")
         ),
         Skin(
-            "schwarzwald", "Schwarzwald", "Tannengrün, Creme & Bollenhut-Rot",
-            c("#14301F"), c("#050D08"), c("#F3E9D2"), c("#A8B89A"), c("#D3202F"), c("#F3C969"), c("#9CC3A0"),
-            c("#1E3A27"), c("#4C6B4F"), c("#2D5238"), 10f, c("#132A1B"), c("#444C6B4F"),
-            clockFamily = "serif", textFamily = "serif", clockScale = 0.9f
+            "schwarzwald", "Schwarzwald", "Kuckucksuhr-Zifferblatt, Holztasten",
+            col("#3B2414"), col("#160C05"), col("#F3E9D2"), col("#CDB68F"), col("#D3202F"), col("#F3C969"), col("#B9D3A8"),
+            col("#1E3A27"), col("#4C6B4F"), col("#2D5238"), 6f, col("#3A2412"), col("#66CDB68F"),
+            clockFamily = "serif", textFamily = "serif",
+            clock = ClockStyle.ANALOG_WOOD, btn = BtnStyle.WOOD, knob = KnobStyle.WOOD, bg = BgStyle.DARKWOOD,
+            iconTint = col("#F3E9D2")
         )
     )
 
