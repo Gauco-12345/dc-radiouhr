@@ -67,7 +67,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /** icon: "" = noch nicht gesucht, "-" = keins gefunden, sonst Bild-URL */
-data class DayForecast(val label: String, val code: Int, val max: Double, val min: Double, val wind: Double)
+data class DayForecast(val label: String, val code: Int, val max: Double, val min: Double, val wind: Double, val rain: Double)
 
 data class Station(val name: String, val url: String, val icon: String = "")
 
@@ -229,6 +229,7 @@ class MainActivity : Activity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         applyOrientation(newConfig)
+        buildFavorites()
     }
 
     @Suppress("DEPRECATION")
@@ -473,8 +474,8 @@ class MainActivity : Activity() {
         tvWeatherInfo.visibility = vis(!on && k.details)
         forecastRow.visibility = vis(!on && k.forecast)
         tvNowPlaying.visibility = vis(k.details)
-        favScroll.visibility = vis(k.presets == Presets.ROW || k.presets == Presets.KEYS)
-        favGrid.visibility = vis(k.presets == Presets.GRID)
+        favScroll.visibility = View.GONE
+        favGrid.visibility = vis(k.presets != Presets.NONE)
         btnTimer.visibility = vis(k.extraButtons)
         btnNight.visibility = vis(k.extraButtons)
         if (on || !k.events) tvEvents.visibility = View.GONE else loadEvents()
@@ -633,7 +634,7 @@ class MainActivity : Activity() {
             Locale.US,
             "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f" +
                 "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,is_day" +
-                "&daily=weather_code,temperature_2m_max,temperature_2m_min,wind_speed_10m_max&timezone=auto&forecast_days=5",
+                "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max&timezone=auto&forecast_days=5",
             lat, lon
         )
         io.execute {
@@ -659,15 +660,17 @@ class MainActivity : Activity() {
                             daily.getJSONArray("weather_code").optInt(i, -1),
                             daily.getJSONArray("temperature_2m_max").optDouble(i),
                             daily.getJSONArray("temperature_2m_min").optDouble(i),
-                            daily.getJSONArray("wind_speed_10m_max").optDouble(i)
+                            daily.getJSONArray("wind_speed_10m_max").optDouble(i),
+                            daily.getJSONArray("precipitation_sum").optDouble(i, 0.0)
                         )
                     )
                 }
                 main.post {
                     tvTemp.text = "${Math.round(temp)}°"
                     tvWeatherIcon.text = weatherIcon(code, isDay)
+                    val rainToday = days.firstOrNull()?.rain ?: 0.0
                     tvWeatherInfo.text = "$place · ${weatherText(code)} · gefühlt ${Math.round(feels)}° · " +
-                        "Wind ${Math.round(wind)} km/h"
+                        "Regen ${mm(rainToday)} · Wind ${Math.round(wind)} km/h"
                     showForecast(days)
                 }
             } catch (e: Exception) {
@@ -679,6 +682,9 @@ class MainActivity : Activity() {
             }
         }
     }
+
+    private fun mm(v: Double): String =
+        if (v.isNaN() || v < 0.05) "0 mm" else String.format(Locale.GERMANY, "%.1f mm", v)
 
     private fun showForecast(days: List<DayForecast>) {
         lastForecast = days
@@ -701,7 +707,8 @@ class MainActivity : Activity() {
             col.addView(line(f.label, 12f, k.sub))
             col.addView(line(weatherIcon(f.code, true), 24f, k.icon))
             col.addView(line("${Math.round(f.max)}° / ${Math.round(f.min)}°", 14f, k.fg))
-            col.addView(line("${Math.round(f.wind)} km/h", 11f, k.wind))
+            col.addView(line(mm(f.rain), 11f, k.wind))
+            col.addView(line("${Math.round(f.wind)} km/h", 11f, k.sub))
             forecastRow.addView(col, LinearLayout.LayoutParams(colW, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
     }
@@ -963,7 +970,7 @@ class MainActivity : Activity() {
             textSize = captionSp
             setTextColor(if (i == active) skin.fg else skin.sub)
             gravity = Gravity.CENTER
-            setSingleLine(true)
+            maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         item.setOnClickListener { stationClick(i) }
@@ -1011,7 +1018,7 @@ class MainActivity : Activity() {
             textSize = 11f
             setTextColor(if (active) Color.WHITE else col("#C8CDD3"))
             gravity = Gravity.CENTER
-            setSingleLine(true)
+            maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         key.setOnClickListener { stationClick(i) }
@@ -1046,6 +1053,30 @@ class MainActivity : Activity() {
         return add
     }
 
+    /** Breite des Radiobereichs (für Umbruch der Senderkacheln). */
+    private fun panelWidthPx(): Int {
+        val dm = resources.displayMetrics
+        val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val w = if (land) (dm.widthPixels - dp(24)) / 2.3f - dp(8) else dm.widthPixels - dp(24)
+        return (w - radioPanel.paddingLeft - radioPanel.paddingRight).toInt()
+    }
+
+    /** Senderkacheln mehrzeilig anordnen. */
+    private fun fillGrid(views: List<View>, cols: Int, itemH: Int) {
+        var row: LinearLayout? = null
+        views.forEachIndexed { n, v ->
+            if (n % cols == 0) {
+                row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                favGrid.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
+            row?.addView(v, LinearLayout.LayoutParams(0, itemH, 1f).apply {
+                setMargins(dp(2).toInt(), dp(3).toInt(), dp(2).toInt(), dp(3).toInt())
+            })
+        }
+        val rest = (cols - views.size % cols) % cols
+        if (views.size > cols) repeat(rest) { row?.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) }
+    }
+
     private fun buildFavorites() {
         if (!::favRow.isInitialized || !::skin.isInitialized) return
         favRow.removeAllViews()
@@ -1057,15 +1088,14 @@ class MainActivity : Activity() {
             Presets.NONE -> return
             Presets.ROW -> {
                 val size = dp(72).toInt()
-                val itemW = dp(92).toInt()
-                stations.forEachIndexed { i, s ->
-                    favRow.addView(favItem(i, s, size, 13f, active), LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
-                }
-                favRow.addView(addTile(size, 13f), LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
+                val views = mutableListOf<View>()
+                stations.forEachIndexed { i, s -> views.add(favItem(i, s, size, 13f, active)) }
+                views.add(addTile(size, 13f))
+                fillGrid(views, maxOf(1, panelWidthPx() / dp(92).toInt()), ViewGroup.LayoutParams.WRAP_CONTENT)
+                return
             }
             Presets.KEYS -> {
-                val keyW = dp(92).toInt()
-                val keyH = dp(78).toInt()
+                val views = mutableListOf<View>()
                 stations.forEachIndexed { i, s ->
                     val key = ivoryKey(s.name, i == active && wantPlaying)
                     key.setOnClickListener { stationClick(i) }
@@ -1073,12 +1103,14 @@ class MainActivity : Activity() {
                         confirmRemove(i)
                         true
                     }
-                    favRow.addView(key, LinearLayout.LayoutParams(keyW, keyH).apply { setMargins(dp(2).toInt(), 0, dp(2).toInt(), 0) })
+                    views.add(key)
                 }
                 val plus = ivoryKey("＋", false)
                 plus.textSize = 20f
                 plus.setOnClickListener { showStations() }
-                favRow.addView(plus, LinearLayout.LayoutParams(dp(50).toInt(), keyH).apply { setMargins(dp(2).toInt(), 0, dp(2).toInt(), 0) })
+                views.add(plus)
+                fillGrid(views, maxOf(1, panelWidthPx() / dp(88).toInt()), dp(74).toInt())
+                return
             }
             Presets.GRID -> {
                 val cols = 4
