@@ -27,6 +27,13 @@ class KnobView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = nu
     var accent = Color.parseColor("#FF8A3D")
         set(v) { field = v; invalidate() }
 
+    var bodyColor = 0xFF1C1C1C.toInt()
+        set(v) { field = v; invalidate() }
+    var trackColor = 0x33FFFFFF
+        set(v) { field = v; invalidate() }
+    var dotColor = Color.WHITE
+        set(v) { field = v; invalidate() }
+
     private val d = resources.displayMetrics.density
     private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; strokeWidth = 5 * d; strokeCap = Paint.Cap.ROUND; color = 0x33FFFFFF
@@ -49,6 +56,10 @@ class KnobView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = nu
         val cy = height / 2f
         val r = min(width, height) / 2f - 5 * d
         rect.set(cx - r, cy - r, cx + r, cy + r)
+        track.color = trackColor
+        body.color = bodyColor
+        ring.color = trackColor
+        dot.color = dotColor
         canvas.drawArc(rect, startAngle, sweep, false, track)
         arc.color = accent
         canvas.drawArc(rect, startAngle, sweep * value, false, arc)

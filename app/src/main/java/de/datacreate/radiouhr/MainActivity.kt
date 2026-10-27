@@ -12,7 +12,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.location.Geocoder
 import android.location.Location
 import android.location.LocationListener
@@ -95,8 +97,13 @@ class MainActivity : Activity() {
     private lateinit var btnTimer: View
     private lateinit var tvTimerBadge: TextView
     private lateinit var btnNight: View
+    private lateinit var btnSettings: ImageView
     private lateinit var weatherRow: View
     private lateinit var forecastRow: LinearLayout
+    private lateinit var favGrid: LinearLayout
+    private lateinit var timerIcon: ImageView
+    private lateinit var skin: Skin
+    private var lastForecast: List<DayForecast> = emptyList()
     private lateinit var knob: KnobView
 
     private val stations = mutableListOf<Station>()
@@ -146,9 +153,10 @@ class MainActivity : Activity() {
         btnNight = findViewById(R.id.btnNight)
         weatherRow = findViewById(R.id.weatherRow)
         forecastRow = findViewById(R.id.forecastRow)
+        favGrid = findViewById(R.id.favGrid)
+        timerIcon = findViewById(R.id.timerIcon)
+        skin = Skins.byId(prefs.getString("skin", "standard"))
 
-        tvTime.typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
-        tvTemp.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
 
         setupPlayer()
         loadStations()
@@ -162,7 +170,8 @@ class MainActivity : Activity() {
         syncKnob()
         btnTimer.setOnClickListener { showTimer() }
         btnNight.setOnClickListener { setNight(!night) }
-        findViewById<View>(R.id.btnSettings).setOnClickListener { showSettings() }
+        btnSettings = findViewById(R.id.btnSettings)
+        btnSettings.setOnClickListener { showSettings() }
         clockPanel.setOnClickListener { setNight(!night) }
         root.setOnClickListener { if (night) setNight(false) }
 
@@ -257,8 +266,8 @@ class MainActivity : Activity() {
             val panelW = dm.widthPixels * 0.55f
             tvTime.setTextSize(
                 TypedValue.COMPLEX_UNIT_PX,
-                if (night) minOf(dm.widthPixels / 3.0f, dm.heightPixels * 0.6f)
-                else minOf(panelW / 3.0f, dm.heightPixels * 0.26f)
+                skin.clockScale * (if (night) minOf(dm.widthPixels / 3.0f, dm.heightPixels * 0.6f)
+                else minOf(panelW / 3.0f, dm.heightPixels * 0.26f))
             )
         } else {
             root.orientation = LinearLayout.VERTICAL
@@ -266,7 +275,7 @@ class MainActivity : Activity() {
             radioPanel.layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             )
-            tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, dm.widthPixels / (if (night) 2.9f else 3.4f))
+            tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, skin.clockScale * dm.widthPixels / (if (night) 2.9f else 3.4f))
         }
     }
 
@@ -342,21 +351,89 @@ class MainActivity : Activity() {
 
     private fun setNight(on: Boolean) {
         night = on
-        val vis = if (on) View.GONE else View.VISIBLE
-        radioPanel.visibility = vis
-        tvDate.visibility = vis
-        weatherRow.visibility = vis
-        tvWeatherInfo.visibility = vis
-        forecastRow.visibility = vis
-        if (on) tvEvents.visibility = View.GONE else loadEvents()
-        tvTime.setTextColor(if (on) Color.parseColor("#B8432F") else Color.WHITE)
+        applyLook()
         val lp = window.attributes
         lp.screenBrightness = if (on) 0.01f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         window.attributes = lp
-        applyOrientation(resources.configuration)
         // nachts kurz angetippt: nach 1 Minute wieder nur Uhr
         main.removeCallbacks(backToNight)
         if (!on && prefs.getBoolean("autoNight", true) && isNightHour()) main.postDelayed(backToNight, 60_000L)
+    }
+
+    private fun vis(show: Boolean) = if (show) View.VISIBLE else View.GONE
+
+    private fun shape(fill: Int, stroke: Int): GradientDrawable = GradientDrawable().apply {
+        cornerRadius = dp(1) * skin.corner
+        setColor(fill)
+        setStroke(maxOf(1, dp(1).toInt()), stroke)
+    }
+
+    private fun btnBg(): StateListDrawable = StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_pressed), shape(skin.btnPressed, skin.btnStroke))
+        addState(intArrayOf(), shape(skin.btnFill, skin.btnStroke))
+    }
+
+    /** Design (Skin) und Tag/Nacht auf alle Elemente anwenden. */
+    private fun applyLook() {
+        val k = skin
+        val on = night
+        root.background = if (on) ColorDrawable(Color.BLACK)
+        else GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(k.bgTop, k.bgBottom))
+
+        tvTime.typeface = Typeface.create(k.clockFamily, k.clockStyle)
+        val tf = Typeface.create(k.textFamily, Typeface.NORMAL)
+        tvTemp.typeface = tf
+        tvDate.typeface = tf
+        tvTime.setTextColor(if (on) Color.parseColor("#B8432F") else k.fg)
+        tvTemp.setTextColor(k.fg)
+        tvStation.setTextColor(k.fg)
+        tvDate.setTextColor(k.sub)
+        tvWeatherInfo.setTextColor(k.sub)
+        tvNowPlaying.setTextColor(k.sub)
+        tvEvents.setTextColor(k.fg)
+        tvWeatherIcon.setTextColor(k.icon)
+        tvTimerBadge.setTextColor(k.accent)
+
+        radioPanel.visibility = vis(!on)
+        tvDate.visibility = vis(!on)
+        weatherRow.visibility = vis(!on)
+        tvWeatherInfo.visibility = vis(!on && k.details)
+        forecastRow.visibility = vis(!on && k.forecast)
+        tvNowPlaying.visibility = vis(k.details)
+        favScroll.visibility = vis(k.presets == Presets.ROW)
+        favGrid.visibility = vis(k.presets == Presets.GRID)
+        btnTimer.visibility = vis(k.extraButtons)
+        btnNight.visibility = vis(k.extraButtons)
+        if (on || !k.events) tvEvents.visibility = View.GONE else loadEvents()
+
+        for (v in listOf<View>(btnPlay, btnTimer, btnNight, btnSettings)) v.background = btnBg()
+        btnPlay.setColorFilter(k.fg)
+        timerIcon.setColorFilter(k.fg)
+        (btnNight as ImageView).setColorFilter(k.fg)
+        btnSettings.setColorFilter(k.fg)
+        knob.accent = k.accent
+        knob.bodyColor = k.knobBody
+        knob.trackColor = k.knobTrack
+        knob.dotColor = k.fg
+
+        buildFavorites()
+        showForecast(lastForecast)
+        applyOrientation(resources.configuration)
+    }
+
+    private fun showSkins() {
+        val list = Skins.all
+        val idx = list.indexOfFirst { it.id == skin.id }
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle("Design wählen")
+            .setSingleChoiceItems(list.map { "${it.name}  –  ${it.desc}" }.toTypedArray(), idx) { d, w ->
+                skin = list[w]
+                prefs.edit().putString("skin", skin.id).apply()
+                applyLook()
+                d.dismiss()
+            }
+            .setNegativeButton("Schließen", null)
+            .show()
     }
 
     // ================================================================ Wetter
@@ -520,7 +597,9 @@ class MainActivity : Activity() {
     }
 
     private fun showForecast(days: List<DayForecast>) {
+        lastForecast = days
         forecastRow.removeAllViews()
+        val k = skin
         val colW = dp(68).toInt()
         for (f in days) {
             val col = LinearLayout(this).apply {
@@ -535,10 +614,10 @@ class MainActivity : Activity() {
                 setSingleLine(true)
                 if (bold) setTypeface(typeface, Typeface.BOLD)
             }
-            col.addView(line(f.label, 12f, Color.parseColor("#AAAAAA")))
-            col.addView(line(weatherIcon(f.code, true), 24f, Color.parseColor("#FFD27A")))
-            col.addView(line("${Math.round(f.max)}° / ${Math.round(f.min)}°", 14f, Color.WHITE))
-            col.addView(line("${Math.round(f.wind)} km/h", 11f, Color.parseColor("#8FB8D8")))
+            col.addView(line(f.label, 12f, k.sub))
+            col.addView(line(weatherIcon(f.code, true), 24f, k.icon))
+            col.addView(line("${Math.round(f.max)}° / ${Math.round(f.min)}°", 14f, k.fg))
+            col.addView(line("${Math.round(f.wind)} km/h", 11f, k.wind))
             forecastRow.addView(col, LinearLayout.LayoutParams(colW, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
     }
@@ -571,14 +650,14 @@ class MainActivity : Activity() {
     // ================================================================ Termine
 
     private fun loadEvents() {
-        if (!prefs.getBoolean("showEvents", true) || !hasPerm(Manifest.permission.READ_CALENDAR)) {
+        if (!skin.events || !prefs.getBoolean("showEvents", true) || !hasPerm(Manifest.permission.READ_CALENDAR)) {
             tvEvents.visibility = View.GONE
             return
         }
         io.execute {
             val lines = try { queryToday() } catch (_: Exception) { null }
             main.post {
-                if (lines == null || night) {
+                if (lines == null || night || !skin.events) {
                     tvEvents.visibility = View.GONE
                 } else {
                     tvEvents.text = if (lines.isEmpty()) "Heute keine Termine mehr" else lines.joinToString("\n")
@@ -742,77 +821,66 @@ class MainActivity : Activity() {
         return palette[(name.hashCode() and 0x7fffffff) % palette.size]
     }
 
-    private fun tile(size: Int): GradientDrawable = GradientDrawable().apply {
-        cornerRadius = dp(14)
-        setColor(Color.WHITE)
+    private fun favItem(i: Int, s: Station, size: Int, captionSp: Float, active: Int): View {
+        val item = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            val p = dp(4).toInt()
+            setPadding(p, p, p, p)
+        }
+        val bmp = icons[s.url]
+        val iconView: View = if (bmp != null) {
+            ImageView(this).apply {
+                setImageBitmap(bmp)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                val p = size / 10
+                setPadding(p, p, p, p)
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(1) * minOf(skin.corner, 16f)
+                    setColor(Color.WHITE)
+                }
+            }
+        } else {
+            TextView(this).apply {
+                text = shortLabel(s.name)
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                setTypeface(typeface, Typeface.BOLD)
+                textSize = if (size > dp(60)) 17f else 14f
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(1) * minOf(skin.corner, 16f)
+                    setColor(colorFor(s.name))
+                }
+            }
+        }
+        if (i == active) {
+            val bg = iconView.background
+            if (bg is GradientDrawable) bg.setStroke(dp(3).toInt(), if (wantPlaying) skin.accent else skin.sub)
+        }
+        iconView.clipToOutline = true
+        item.addView(iconView, LinearLayout.LayoutParams(size, size))
+        item.addView(TextView(this).apply {
+            text = s.name
+            textSize = captionSp
+            setTextColor(if (i == active) skin.fg else skin.sub)
+            gravity = Gravity.CENTER
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        item.setOnClickListener {
+            if (i == current && wantPlaying) stopRadio() else {
+                current = i
+                playCurrent()
+            }
+        }
+        item.setOnLongClickListener {
+            confirmRemove(i)
+            true
+        }
+        return item
     }
 
-    private fun buildFavorites() {
-        if (!::favRow.isInitialized) return
-        favRow.removeAllViews()
-        val size = dp(52).toInt()
-        val itemW = dp(70).toInt()
-        val active = current.coerceIn(0, maxOf(0, stations.size - 1))
-
-        stations.forEachIndexed { i, s ->
-            val item = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
-                val p = dp(4).toInt()
-                setPadding(p, p, p, p)
-            }
-            val bmp = icons[s.url]
-            val iconView: View = if (bmp != null) {
-                ImageView(this).apply {
-                    setImageBitmap(bmp)
-                    scaleType = ImageView.ScaleType.FIT_CENTER
-                    val p = dp(5).toInt()
-                    setPadding(p, p, p, p)
-                    background = tile(size)
-                }
-            } else {
-                TextView(this).apply {
-                    text = shortLabel(s.name)
-                    gravity = Gravity.CENTER
-                    setTextColor(Color.WHITE)
-                    setTypeface(typeface, Typeface.BOLD)
-                    textSize = 14f
-                    background = GradientDrawable().apply {
-                        cornerRadius = dp(14)
-                        setColor(colorFor(s.name))
-                    }
-                }
-            }
-            if (i == active) {
-                val bg = iconView.background
-                if (bg is GradientDrawable) bg.setStroke(dp(3).toInt(), if (wantPlaying) accent else Color.GRAY)
-            }
-            if (Build.VERSION.SDK_INT >= 21) iconView.clipToOutline = true
-            item.addView(iconView, LinearLayout.LayoutParams(size, size))
-
-            val caption = TextView(this).apply {
-                text = s.name
-                textSize = 11f
-                setTextColor(if (i == active) Color.WHITE else Color.parseColor("#999999"))
-                gravity = Gravity.CENTER
-                setSingleLine(true)
-                ellipsize = TextUtils.TruncateAt.END
-            }
-            item.addView(caption, LinearLayout.LayoutParams(itemW - dp(8).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT))
-            item.setOnClickListener {
-                if (i == current && wantPlaying) stopRadio() else {
-                    current = i
-                    playCurrent()
-                }
-            }
-            item.setOnLongClickListener {
-                confirmRemove(i)
-                true
-            }
-            favRow.addView(item, LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }
-
-        // Kachel „+“ zum Hinzufügen / Verwalten
+    private fun addTile(size: Int, captionSp: Float): View {
         val add = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -820,31 +888,60 @@ class MainActivity : Activity() {
             setPadding(p, p, p, p)
             setOnClickListener { showStations() }
         }
-        val plus = TextView(this).apply {
+        add.addView(TextView(this).apply {
             text = "＋"
             gravity = Gravity.CENTER
             textSize = 24f
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply {
-                cornerRadius = dp(14)
-                setColor(0x22FFFFFF)
-                setStroke(dp(1).toInt(), 0x55FFFFFF)
-            }
-        }
-        add.addView(plus, LinearLayout.LayoutParams(size, size))
+            setTextColor(skin.fg)
+            background = shape(skin.btnFill, skin.btnStroke)
+        }, LinearLayout.LayoutParams(size, size))
         add.addView(TextView(this).apply {
             text = "Sender"
-            textSize = 11f
+            textSize = captionSp
             gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#999999"))
-        }, LinearLayout.LayoutParams(itemW - dp(8).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT))
-        favRow.addView(add, LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
+            setTextColor(skin.sub)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return add
+    }
 
-        // aktiven Sender sichtbar halten
-        favScroll.post {
-            val child = favRow.getChildAt(active) ?: return@post
-            val target = child.left - (favScroll.width - child.width) / 2
-            favScroll.smoothScrollTo(maxOf(0, target), 0)
+    private fun buildFavorites() {
+        if (!::favRow.isInitialized || !::skin.isInitialized) return
+        favRow.removeAllViews()
+        favGrid.removeAllViews()
+        val active = current.coerceIn(0, maxOf(0, stations.size - 1))
+
+        when (skin.presets) {
+            Presets.NONE -> return
+            Presets.ROW -> {
+                val size = dp(52).toInt()
+                val itemW = dp(70).toInt()
+                stations.forEachIndexed { i, s ->
+                    favRow.addView(favItem(i, s, size, 11f, active), LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
+                }
+                favRow.addView(addTile(size, 11f), LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
+                favScroll.post {
+                    val child = favRow.getChildAt(active) ?: return@post
+                    val target = child.left - (favScroll.width - child.width) / 2
+                    favScroll.smoothScrollTo(maxOf(0, target), 0)
+                }
+            }
+            Presets.GRID -> {
+                val cols = 4
+                val size = dp(66).toInt()
+                val views = mutableListOf<View>()
+                stations.forEachIndexed { i, s -> views.add(favItem(i, s, size, 13f, active)) }
+                views.add(addTile(size, 13f))
+                var row: LinearLayout? = null
+                views.forEachIndexed { n, v ->
+                    if (n % cols == 0) {
+                        row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                        favGrid.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                    }
+                    row?.addView(v, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                }
+                val rest = (cols - views.size % cols) % cols
+                repeat(rest) { row?.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) }
+            }
         }
     }
 
@@ -1140,7 +1237,8 @@ class MainActivity : Activity() {
                 refreshWeather()
                 loadEvents()
             }
-            .setNeutralButton("Festen Ort wählen") { _, _ -> askPlace() }
+            .setNeutralButton("Fester Ort") { _, _ -> askPlace() }
+            .setNegativeButton("Design") { _, _ -> showSkins() }
             .show()
     }
 
