@@ -4,10 +4,10 @@ import android.graphics.Color
 import android.graphics.Typeface
 
 enum class Presets { ROW, GRID, KEYS, NONE }
-enum class ClockStyle { TEXT, NIXIE, SEGMENT, FLIP, ANALOG_BRAUN, ANALOG_WOOD, CUCKOO }
-enum class BtnStyle { FLAT, IVORY, KEYPAD, LCD, NEON, GLASS, ROUND, WOOD, NONE }
+enum class ClockStyle { TEXT, NIXIE, SEGMENT, FLIP, ANALOG_BRAUN, ANALOG_WOOD, CUCKOO, STATION }
+enum class BtnStyle { FLAT, IVORY, KEYPAD, LCD, NEON, GLASS, ROUND, WOOD, NONE, OUTLINE }
 enum class KnobStyle { MODERN, BAKELITE, LED, NEON, THIN, BRAUN, WOOD, GLASS }
-enum class BgStyle { PLAIN, WOOD, DARKWOOD, METAL, SYNTH, WAVES }
+enum class BgStyle { PLAIN, WOOD, DARKWOOD, METAL, SYNTH, WAVES, MOUNTAINS, PAPER, CONCRETE }
 enum class PanelStyle { NONE, GRILLE, BEZEL, GLASS }
 enum class StationStyle { TEXT, DIAL, LCD }
 
@@ -49,7 +49,8 @@ data class Skin(
     val station: StationStyle = StationStyle.TEXT,
     val iconTint: Int = Color.WHITE,
     val lcdScreen: Int = col("#101010"),
-    val textGlow: Boolean = false
+    val textGlow: Boolean = false,
+    val mono: Boolean = false
 )
 
 object Skins {
@@ -100,12 +101,6 @@ object Skins {
             clock = ClockStyle.ANALOG_BRAUN, btn = BtnStyle.ROUND, knob = KnobStyle.BRAUN, iconTint = col("#2A2A2A")
         ),
         Skin(
-            "neon", "Neon", "leuchtende Konturen, Synthwave-Horizont",
-            col("#1B0A33"), col("#06020E"), col("#39F3FF"), col("#C77DFF"), col("#FF2BD6"), col("#FFE45C"), col("#39F3FF"),
-            col("#1AFF2BD6"), col("#88FF2BD6"), col("#44FF2BD6"), 12f, col("#140726"), col("#44FF2BD6"),
-            btn = BtnStyle.NEON, knob = KnobStyle.NEON, bg = BgStyle.SYNTH, iconTint = col("#39F3FF"), textGlow = true
-        ),
-        Skin(
             "ozean", "Ozean", "Glas-Optik über Wellen",
             col("#0D3557"), col("#020D19"), col("#E6F4FF"), col("#8DB8D9"), col("#2EC4E6"), col("#FFD27A"), col("#7FD1E8"),
             col("#1AFFFFFF"), col("#44FFFFFF"), col("#33FFFFFF"), 22f, col("#0A1E33"), col("#332EC4E6"),
@@ -120,7 +115,31 @@ object Skins {
             clock = ClockStyle.CUCKOO, btn = BtnStyle.WOOD, knob = KnobStyle.WOOD, bg = BgStyle.DARKWOOD,
             iconTint = col("#F3E9D2")
         )
+,
+        Skin(
+            "bahnhof", "Bahnhofsuhr", "Zeigeruhr mit roter Kelle, Sichtbeton",
+            col("#4A4C4E"), col("#2A2C2E"), col("#F2F2F2"), col("#B4B8BC"), col("#D7141A"), col("#FFFFFF"), col("#C9D3DC"),
+            col("#22FFFFFF"), col("#44FFFFFF"), col("#44FFFFFF"), 4f, col("#E8E8E8"), col("#44FFFFFF"),
+            clockFamily = "sans-serif", textFamily = "sans-serif-condensed",
+            clock = ClockStyle.STATION, btn = BtnStyle.FLAT, knob = KnobStyle.BRAUN, bg = BgStyle.CONCRETE,
+            iconTint = col("#F2F2F2")
+        ),
+        Skin(
+            "papier", "Papier (E-Ink)", "wie ein E-Reader: schwarz auf Papier, Logos grau",
+            col("#F1EEE6"), col("#E6E2D8"), col("#1A1A1A"), col("#5A5A5A"), col("#1A1A1A"), col("#1A1A1A"), col("#5A5A5A"),
+            col("#00000000"), col("#991A1A1A"), col("#221A1A1A"), 8f, col("#F1EEE6"), col("#331A1A1A"),
+            clockFamily = "serif", textFamily = "serif",
+            btn = BtnStyle.OUTLINE, knob = KnobStyle.THIN, bg = BgStyle.PAPER, iconTint = col("#1A1A1A"), mono = true
+        ),
+        Skin(
+            "bergnacht", "Bergnacht", "Bergsilhouetten mit Tannen, Mond und Sternen",
+            col("#0B1530"), col("#1C2B4A"), col("#F4F6FF"), col("#A9B6D6"), col("#F3D27A"), col("#F3D27A"), col("#A9C8E8"),
+            col("#22FFFFFF"), col("#44FFFFFF"), col("#40FFFFFF"), 18f, col("#14203C"), col("#33F3D27A"),
+            btn = BtnStyle.GLASS, knob = KnobStyle.GLASS, bg = BgStyle.MOUNTAINS, iconTint = col("#F4F6FF")
+        )
     )
+
+    fun byIdOrNull(id: String?) = all.firstOrNull { it.id == id }
 
     fun byId(id: String?): Skin = all.firstOrNull { it.id == id } ?: all[0]
 }

@@ -197,6 +197,12 @@ class ButtonDrawable(
                 stroke(c, inset(body, 3.5f * d), rad * 0.6f, col("#44FFE0B0"), 1 * d)
             }
 
+            BtnStyle.OUTLINE -> {
+                val rad = k.corner * d
+                if (pressed) fill(c, b, rad, k.btnPressed)
+                stroke(c, inset(b, 1 * d), rad, k.btnStroke, 1.5f * d)
+            }
+
             BtnStyle.NONE -> {
                 if (pressed) {
                     p.color = col("#22FFFFFF")
@@ -248,6 +254,9 @@ class BgDrawable(private val style: BgStyle, private val k: Skin, private val d:
             BgStyle.METAL -> metal(c, w, h)
             BgStyle.SYNTH -> synth(c, w, h)
             BgStyle.WAVES -> waves(c, w, h)
+            BgStyle.MOUNTAINS -> mountains(c, w, h)
+            BgStyle.PAPER -> paper(c, w, h)
+            BgStyle.CONCRETE -> concrete(c, w, h)
         }
     }
 
@@ -356,6 +365,112 @@ class BgDrawable(private val style: BgStyle, private val k: Skin, private val d:
         for (i in 0 until 60) {
             p.color = withAlpha(Color.WHITE, 40 + rnd.nextInt(120))
             c.drawCircle(rnd.nextFloat() * w, rnd.nextFloat() * horizon * 0.8f, (0.5f + rnd.nextFloat()) * d, p)
+        }
+    }
+
+    private fun paper(c: Canvas, w: Float, h: Float) {
+        val rnd = Random(21)
+        p.style = Paint.Style.FILL
+        val n = ((w * h) / (9 * d * d)).toInt().coerceAtMost(60000)
+        for (i in 0 until n) {
+            p.color = if (rnd.nextBoolean()) withAlpha(Color.BLACK, 6 + rnd.nextInt(10)) else withAlpha(Color.WHITE, 20 + rnd.nextInt(30))
+            val x = rnd.nextFloat() * w
+            val y = rnd.nextFloat() * h
+            c.drawRect(x, y, x + d * 0.8f, y + d * 0.8f, p)
+        }
+        // Fasern
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 0.5f * d
+        for (i in 0 until 160) {
+            p.color = withAlpha(Color.BLACK, 8 + rnd.nextInt(8))
+            val x = rnd.nextFloat() * w
+            val y = rnd.nextFloat() * h
+            c.drawLine(x, y, x + (rnd.nextFloat() - 0.5f) * 14 * d, y + (rnd.nextFloat() - 0.5f) * 6 * d, p)
+        }
+        p.style = Paint.Style.FILL
+    }
+
+    private fun concrete(c: Canvas, w: Float, h: Float) {
+        val rnd = Random(17)
+        p.style = Paint.Style.FILL
+        for (i in 0 until 900) {
+            val r = (2 + rnd.nextFloat() * 30) * d
+            p.color = if (rnd.nextBoolean()) withAlpha(Color.WHITE, 3 + rnd.nextInt(6)) else withAlpha(Color.BLACK, 4 + rnd.nextInt(8))
+            c.drawCircle(rnd.nextFloat() * w, rnd.nextFloat() * h, r, p)
+        }
+        for (i in 0 until 400) {
+            p.color = withAlpha(Color.BLACK, 40 + rnd.nextInt(60))
+            c.drawCircle(rnd.nextFloat() * w, rnd.nextFloat() * h, (0.6f + rnd.nextFloat()) * d, p)
+        }
+        // Schalungsfugen
+        p.color = withAlpha(Color.BLACK, 30)
+        var y = h * 0.33f
+        while (y < h) {
+            c.drawRect(0f, y, w, y + 1.2f * d, p)
+            y += h * 0.33f
+        }
+    }
+
+    private fun mountains(c: Canvas, w: Float, h: Float) {
+        val rnd = Random(4)
+        p.style = Paint.Style.FILL
+        // Sterne
+        for (i in 0 until 140) {
+            p.color = withAlpha(Color.WHITE, 40 + rnd.nextInt(170))
+            c.drawCircle(rnd.nextFloat() * w, rnd.nextFloat() * h * 0.6f, (0.4f + rnd.nextFloat() * 1.1f) * d, p)
+        }
+        // Mond
+        val mr = min(w, h) * 0.07f
+        val mx = w * 0.8f
+        val my = h * 0.14f
+        p.shader = RadialGradient(mx, my, mr * 4, withAlpha(col("#F3D27A"), 60), withAlpha(col("#F3D27A"), 0), Shader.TileMode.CLAMP)
+        c.drawCircle(mx, my, mr * 4, p)
+        p.shader = null
+        p.color = col("#F6E7B8")
+        c.drawCircle(mx, my, mr, p)
+        p.color = k.bgTop
+        c.drawCircle(mx + mr * 0.45f, my - mr * 0.2f, mr * 0.85f, p)
+        // Bergketten
+        val layers = arrayOf(col("#2A3B5E"), col("#1B2846"), col("#111A30"), col("#0A1020"))
+        layers.forEachIndexed { li, color ->
+            val base = h * (0.55f + li * 0.1f)
+            val amp = h * (0.16f - li * 0.025f)
+            val path = Path()
+            path.moveTo(0f, h)
+            var x = 0f
+            var y = base - rnd.nextFloat() * amp
+            path.lineTo(0f, y)
+            while (x < w) {
+                x += (20 + rnd.nextFloat() * 60) * d
+                y = base - rnd.nextFloat() * amp
+                path.lineTo(x, y)
+            }
+            path.lineTo(w, h)
+            path.close()
+            p.color = color
+            c.drawPath(path, p)
+            if (li == 0) {
+                // Schneekappen
+                p.color = withAlpha(Color.WHITE, 26)
+                c.drawPath(path, p)
+            }
+            if (li >= 2) {
+                // Tannen
+                val tr = Random(li * 13L)
+                var tx = 0f
+                while (tx < w) {
+                    val th = (14 + tr.nextFloat() * 22) * d * (li - 1)
+                    val ty = base + (tr.nextFloat() - 0.2f) * 8 * d
+                    val tree = Path()
+                    tree.moveTo(tx, ty - th)
+                    tree.lineTo(tx + th * 0.28f, ty)
+                    tree.lineTo(tx - th * 0.28f, ty)
+                    tree.close()
+                    p.color = color
+                    c.drawPath(tree, p)
+                    tx += (6 + tr.nextFloat() * 14) * d
+                }
+            }
         }
     }
 

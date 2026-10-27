@@ -59,6 +59,7 @@ class ClockView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = n
             ClockStyle.FLIP -> flip(canvas)
             ClockStyle.ANALOG_BRAUN -> braun(canvas)
             ClockStyle.ANALOG_WOOD -> woodClock(canvas)
+            ClockStyle.STATION -> station(canvas)
             ClockStyle.CUCKOO -> {
                 cuckoo(canvas)
                 postInvalidateDelayed(50)
@@ -430,6 +431,60 @@ class ClockView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = n
         p.strokeWidth = w * 0.18f
         c.drawCircle(cx, cy - len * 0.42f, w * 0.45f, p)
         p.style = Paint.Style.FILL
+        c.restore()
+    }
+
+    // ------------------------------------------------------------ Bahnhofsuhr
+
+    private fun station(c: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = min(width, height) / 2f - 4 * d
+        p.style = Paint.Style.FILL
+        p.shader = null
+        p.color = col("#55000000")
+        c.drawCircle(cx, cy + 4 * d, r, p)
+        p.shader = LinearGradient(cx - r, cy - r, cx + r, cy + r, col("#E8E8E8"), col("#7A7A7A"), Shader.TileMode.CLAMP)
+        c.drawCircle(cx, cy, r, p)
+        p.shader = null
+        val fr = r * 0.9f
+        p.color = Color.WHITE
+        c.drawCircle(cx, cy, fr, p)
+        // Striche
+        p.color = col("#111111")
+        for (i in 0 until 60) {
+            c.save()
+            c.rotate(i * 6f, cx, cy)
+            if (i % 5 == 0) c.drawRect(cx - fr * 0.035f, cy - fr * 0.95f, cx + fr * 0.035f, cy - fr * 0.7f, p)
+            else c.drawRect(cx - fr * 0.012f, cy - fr * 0.95f, cx + fr * 0.012f, cy - fr * 0.87f, p)
+            c.restore()
+        }
+        // Stundenzeiger
+        bar(c, cx, cy, (hh % 12 + mm / 60f) * 30f, fr * 0.62f, fr * 0.18f, fr * 0.075f, fr * 0.055f, col("#111111"))
+        bar(c, cx, cy, (mm + ss / 60f) * 6f, fr * 0.9f, fr * 0.18f, fr * 0.055f, fr * 0.04f, col("#111111"))
+        // Kelle
+        c.save()
+        c.rotate(ss * 6f, cx, cy)
+        p.color = col("#D7141A")
+        c.drawRect(cx - fr * 0.012f, cy - fr * 0.6f, cx + fr * 0.012f, cy + fr * 0.3f, p)
+        c.drawCircle(cx, cy - fr * 0.6f, fr * 0.1f, p)
+        c.restore()
+        p.color = col("#D7141A")
+        c.drawCircle(cx, cy, fr * 0.03f, p)
+    }
+
+    private fun bar(c: Canvas, cx: Float, cy: Float, deg: Float, len: Float, tail: Float, wBase: Float, wTip: Float, color: Int) {
+        c.save()
+        c.rotate(deg, cx, cy)
+        val path = Path()
+        path.moveTo(cx - wBase / 2, cy + tail)
+        path.lineTo(cx - wTip / 2, cy - len)
+        path.lineTo(cx + wTip / 2, cy - len)
+        path.lineTo(cx + wBase / 2, cy + tail)
+        path.close()
+        p.style = Paint.Style.FILL
+        p.color = color
+        c.drawPath(path, p)
         c.restore()
     }
 

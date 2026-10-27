@@ -11,6 +11,8 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
@@ -294,7 +296,7 @@ class MainActivity : Activity() {
         tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, ts)
         val ch = when (skin.clock) {
             ClockStyle.CUCKOO -> availH
-            ClockStyle.ANALOG_BRAUN, ClockStyle.ANALOG_WOOD -> minOf(ts * 2.1f, availH)
+            ClockStyle.ANALOG_BRAUN, ClockStyle.ANALOG_WOOD, ClockStyle.STATION -> minOf(ts * 2.1f, availH)
             else -> minOf(ts * 1.3f, availH)
         }
         clockView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ch.toInt())
@@ -417,7 +419,7 @@ class MainActivity : Activity() {
         clockView.visibility = vis(drawn)
         clockView.style = k.clock
         clockView.litColor = if (on) Color.parseColor("#B8432F") else k.fg
-        clockView.alpha = if (on && (k.clock == ClockStyle.ANALOG_BRAUN || k.clock == ClockStyle.FLIP || k.clock == ClockStyle.CUCKOO)) 0.35f
+        clockView.alpha = if (on && (k.clock == ClockStyle.ANALOG_BRAUN || k.clock == ClockStyle.FLIP || k.clock == ClockStyle.CUCKOO || k.clock == ClockStyle.STATION)) 0.35f
         else if (on) 0.6f else 1f
         tvTime.typeface = Typeface.create(k.clockFamily, k.clockStyle)
         if (k.textGlow && !on) tvTime.setShadowLayer(dp(14), 0f, 0f, k.accent) else tvTime.setShadowLayer(0f, 0f, 0f, 0)
@@ -487,9 +489,9 @@ class MainActivity : Activity() {
         timerIcon.setColorFilter(tint)
         (btnNight as ImageView).setColorFilter(tint)
         btnSettings.setColorFilter(tint)
-        val ip = if (k.btn == BtnStyle.IVORY) dp(4).toInt() else 0
-        for (v in listOf<View>(btnPlay, btnNight, btnSettings)) {
-            v.setPadding(dp(14).toInt(), dp(14).toInt() - ip, dp(14).toInt(), dp(14).toInt() + ip)
+        val ip = if (k.btn == BtnStyle.IVORY) dp(3).toInt() else 0
+        for (v in listOf<View>(btnPlay, btnNight, btnSettings, timerIcon)) {
+            v.setPadding(dp(10).toInt(), dp(10).toInt() - ip, dp(10).toInt(), dp(10).toInt() + ip)
         }
 
         knob.style = k.knob
@@ -916,6 +918,7 @@ class MainActivity : Activity() {
         val v: View = if (bmp != null) {
             ImageView(this).apply {
                 setImageBitmap(bmp)
+                if (skin.mono) colorFilter = ColorMatrixColorFilter(ColorMatrix().apply { setSaturation(0f) })
                 scaleType = ImageView.ScaleType.FIT_CENTER
                 val p = size / 10
                 setPadding(p, p, p, p)
@@ -933,7 +936,7 @@ class MainActivity : Activity() {
                 textSize = if (size > dp(56)) 16f else 13f
                 background = GradientDrawable().apply {
                     cornerRadius = rad
-                    setColor(colorFor(s.name))
+                    setColor(if (skin.mono) col("#3A3A3A") else colorFor(s.name))
                 }
             }
         }
@@ -975,7 +978,7 @@ class MainActivity : Activity() {
     private fun ivoryKey(label: String, latched: Boolean): TextView = TextView(this).apply {
         text = label
         gravity = Gravity.CENTER
-        textSize = 12f
+        textSize = 14f
         maxLines = 2
         ellipsize = TextUtils.TruncateAt.END
         typeface = Typeface.create("serif", Typeface.BOLD)
@@ -1001,7 +1004,7 @@ class MainActivity : Activity() {
             setTextColor(if (active) skin.accent else col("#9AA3AD"))
             gravity = Gravity.CENTER
         })
-        val size = dp(46).toInt()
+        val size = dp(58).toInt()
         key.addView(logoView(s, size), LinearLayout.LayoutParams(size, size))
         key.addView(TextView(this).apply {
             text = s.name
@@ -1053,16 +1056,16 @@ class MainActivity : Activity() {
         when (skin.presets) {
             Presets.NONE -> return
             Presets.ROW -> {
-                val size = dp(52).toInt()
-                val itemW = dp(70).toInt()
+                val size = dp(72).toInt()
+                val itemW = dp(92).toInt()
                 stations.forEachIndexed { i, s ->
-                    favRow.addView(favItem(i, s, size, 11f, active), LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
+                    favRow.addView(favItem(i, s, size, 13f, active), LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
                 }
-                favRow.addView(addTile(size, 11f), LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
+                favRow.addView(addTile(size, 13f), LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
             Presets.KEYS -> {
-                val keyW = dp(74).toInt()
-                val keyH = dp(62).toInt()
+                val keyW = dp(92).toInt()
+                val keyH = dp(78).toInt()
                 stations.forEachIndexed { i, s ->
                     val key = ivoryKey(s.name, i == active && wantPlaying)
                     key.setOnClickListener { stationClick(i) }
@@ -1081,7 +1084,7 @@ class MainActivity : Activity() {
                 val cols = 4
                 val views = mutableListOf<View>()
                 stations.forEachIndexed { i, s -> views.add(keypadKey(i, s, i == active && wantPlaying)) }
-                views.add(addTile(dp(46).toInt(), 11f))
+                views.add(addTile(dp(58).toInt(), 12f))
                 var row: LinearLayout? = null
                 views.forEachIndexed { n, v ->
                     if (n % cols == 0) {
