@@ -550,3 +550,34 @@ class PanelDrawable(private val style: PanelStyle, private val k: Skin, private 
         }
     }
 }
+
+/** Zahnrad-Symbol, gezeichnet. */
+class GearDrawable(private val color: Int) : BaseDrawable() {
+    override fun draw(c: Canvas) {
+        val b = RectF(bounds)
+        val cx = b.centerX()
+        val cy = b.centerY()
+        val r = min(b.width(), b.height()) / 2f
+        if (r <= 0f) return
+        p.shader = null
+        p.style = Paint.Style.FILL
+        p.color = color
+        val teeth = 8
+        val path = Path()
+        for (i in 0 until teeth * 2) {
+            val a1 = Math.toRadians(i * 360.0 / (teeth * 2) - 360.0 / (teeth * 4) * 0.55)
+            val a2 = Math.toRadians(i * 360.0 / (teeth * 2) + 360.0 / (teeth * 4) * 0.55)
+            val rr = if (i % 2 == 0) r else r * 0.76f
+            val x1 = cx + (rr * kotlin.math.cos(a1)).toFloat()
+            val y1 = cy + (rr * sin(a1)).toFloat()
+            val x2 = cx + (rr * kotlin.math.cos(a2)).toFloat()
+            val y2 = cy + (rr * sin(a2)).toFloat()
+            if (i == 0) path.moveTo(x1, y1) else path.lineTo(x1, y1)
+            path.lineTo(x2, y2)
+        }
+        path.close()
+        path.addCircle(cx, cy, r * 0.32f, Path.Direction.CCW)
+        path.fillType = Path.FillType.EVEN_ODD
+        c.drawPath(path, p)
+    }
+}

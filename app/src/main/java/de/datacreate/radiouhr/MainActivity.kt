@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ContentUris
+import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -67,7 +68,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /** icon: "" = noch nicht gesucht, "-" = keins gefunden, sonst Bild-URL */
-data class DayForecast(val label: String, val code: Int, val max: Double, val min: Double, val wind: Double, val rain: Double)
+data class DayForecast(val label: String, val code: Int, val max: Double, val min: Double, val wind: Double, val rain: Double, val sun: Double = Double.NaN)
 
 data class Station(val name: String, val url: String, val icon: String = "")
 
@@ -101,6 +102,9 @@ class MainActivity : Activity() {
     private lateinit var btnNight: View
     private lateinit var btnSettings: ImageView
     private lateinit var btnAdd: ImageView
+    private lateinit var btnGear: ImageView
+    private lateinit var weatherBox: View
+    private lateinit var wxDivider: View
     private lateinit var weatherRow: View
     private lateinit var forecastRow: LinearLayout
     private lateinit var favGrid: LinearLayout
@@ -164,7 +168,7 @@ class MainActivity : Activity() {
         dialView = findViewById(R.id.dialView)
         dialView.onPick = { i -> stationClick(i) }
         clockView.setOnClickListener { setNight(!night) }
-        skin = Skins.byId(prefs.getString("skin", "standard"))
+        skin = loadSkin()
 
 
         setupPlayer()
@@ -185,7 +189,13 @@ class MainActivity : Activity() {
         btnTimer.setOnClickListener { showTimer() }
         btnNight.setOnClickListener { setNight(!night) }
         btnSettings = findViewById(R.id.btnSettings)
-        btnSettings.setOnClickListener { showSettings() }
+        btnSettings.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        btnGear = findViewById(R.id.btnGear)
+        btnGear.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        weatherBox = findViewById(R.id.weatherBox)
+        wxDivider = findViewById(R.id.wxDivider)
+        weatherBox.setOnClickListener { startActivity(Intent(this, WeatherActivity::class.java)) }
+        tvTemp.setOnClickListener { startActivity(Intent(this, WeatherActivity::class.java)) }
         btnAdd = findViewById(R.id.btnAdd)
         btnAdd.setOnClickListener { showStations() }
         clockPanel.setOnClickListener { setNight(!night) }
@@ -203,6 +213,11 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         hideSystemUi()
+        skin = loadSkin()
+        lastAutoNight = null
+        applyLook()
+        checkAutoNight(Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
+        showWeather(prefs.getString("wxPlaceName", placeName()) ?: placeName())
         main.removeCallbacks(tick)
         main.post(tick)
         main.removeCallbacks(weatherLoop)
@@ -285,8 +300,8 @@ class MainActivity : Activity() {
                 leftMargin = dp(8).toInt()
             }
             val panelW = dm.widthPixels * 0.55f
-            ts = skin.clockScale * (if (night) minOf(dm.widthPixels / 2.8f, dm.heightPixels * 0.66f)
-            else minOf(panelW / 2.7f, dm.heightPixels * 0.36f))
+            ts = skin.clockScale * (if (night) minOf(dm.widthPixels / 2.7f, dm.heightPixels * 0.7f)
+            else minOf(panelW / 2.55f, dm.heightPixels * 0.42f))
             availH = dm.heightPixels * (if (night) 0.92f else 0.86f)
         } else {
             root.orientation = LinearLayout.VERTICAL
@@ -294,8 +309,8 @@ class MainActivity : Activity() {
             radioPanel.layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { topMargin = dp(8).toInt() }
-            ts = skin.clockScale * dm.widthPixels / (if (night) 2.55f else 2.8f)
-            availH = dm.heightPixels * (if (night) 0.85f else 0.5f)
+            ts = skin.clockScale * dm.widthPixels / (if (night) 2.5f else 2.6f)
+            availH = dm.heightPixels * (if (night) 0.85f else 0.55f)
         }
         tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, ts)
         val ch = when (skin.clock) {
@@ -363,17 +378,20 @@ class MainActivity : Activity() {
             lastAutoNight = null
             return
         }
-        val should = hour >= 22 || hour < 7
+        val should = nightAt(hour)
         if (lastAutoNight != should) {
             lastAutoNight = should
             setNight(should)
         }
     }
 
-    private fun isNightHour(): Boolean {
-        val h = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-        return h >= 22 || h < 7
+    private fun nightAt(h: Int): Boolean {
+        val from = prefs.getInt("nightFrom", 22)
+        val to = prefs.getInt("nightTo", 7)
+        return if (from == to) false else if (from < to) h in from until to else (h >= from || h < to)
     }
+
+    private fun isNightHour(): Boolean = nightAt(Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
 
     private val backToNight = Runnable { if (!night && isNightHour()) setNight(true) }
 
@@ -473,9 +491,15 @@ class MainActivity : Activity() {
 
         radioPanel.visibility = vis(!on)
         tvDate.visibility = vis(!on)
+        val fc = k.forecast && prefs.getBoolean("wxForecast", true)
+        weatherBox.visibility = vis(!on)
         weatherRow.visibility = vis(!on)
-        tvWeatherInfo.visibility = vis(!on && k.details)
-        forecastRow.visibility = vis(!on && k.forecast)
+        tvWeatherInfo.visibility = vis(!on && k.details && tvWeatherInfo.text.isNotEmpty())
+        forecastRow.visibility = vis(!on && fc)
+        wxDivider.visibility = vis(!on && fc)
+        wxDivider.setBackgroundColor(Color.argb(70, Color.red(k.sub), Color.green(k.sub), Color.blue(k.sub)))
+        btnGear.visibility = vis(!on)
+        btnGear.setImageDrawable(GearDrawable(if (k.btn == BtnStyle.ROUND) col("#2A2A2A") else k.iconTint))
         tvNowPlaying.visibility = vis(k.details)
         favScroll.visibility = View.GONE
         favGrid.visibility = vis(k.presets != Presets.NONE)
@@ -533,6 +557,12 @@ class MainActivity : Activity() {
             refreshWeather()
             main.postDelayed(this, 15 * 60 * 1000L)
         }
+    }
+
+    private fun loadSkin(): Skin {
+        val base = Skins.byId(prefs.getString("skin", "standard"))
+        val o = prefs.getString("clockStyle", "") ?: ""
+        return if (o.isEmpty()) base else try { base.copy(clock = ClockStyle.valueOf(o)) } catch (_: Exception) { base }
     }
 
     private fun placeName() = prefs.getString("placeName", "Todtnau") ?: "Todtnau"
@@ -635,52 +665,25 @@ class MainActivity : Activity() {
     }
 
     private fun fetchWeather(lat: Double, lon: Double, place: String) {
-        val url = String.format(
-            Locale.US,
-            "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f" +
-                "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,is_day" +
-                "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max&timezone=auto&forecast_days=5",
-            lat, lon
-        )
+        prefs.edit()
+            .putFloat("wxLat", lat.toFloat())
+            .putFloat("wxLon", lon.toFloat())
+            .putString("wxPlaceName", place)
+            .apply()
         io.execute {
+            var ok = false
             try {
-                val j = JSONObject(httpGet(url))
-                val cur = j.getJSONObject("current")
-                val temp = cur.getDouble("temperature_2m")
-                val feels = cur.getDouble("apparent_temperature")
-                val code = cur.getInt("weather_code")
-                val wind = cur.getDouble("wind_speed_10m")
-                val isDay = cur.optInt("is_day", 1) == 1
-                val daily = j.getJSONObject("daily")
-                val days = mutableListOf<DayForecast>()
-                val times = daily.getJSONArray("time")
-                val parse = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-                val wd = SimpleDateFormat("EEE", Locale.GERMANY)
-                for (i in 0 until minOf(times.length(), 5)) {
-                    val label = if (i == 0) "Heute" else
-                        (try { wd.format(parse.parse(times.getString(i))!!) } catch (_: Exception) { "" }).trimEnd('.')
-                    days.add(
-                        DayForecast(
-                            label,
-                            daily.getJSONArray("weather_code").optInt(i, -1),
-                            daily.getJSONArray("temperature_2m_max").optDouble(i),
-                            daily.getJSONArray("temperature_2m_min").optDouble(i),
-                            daily.getJSONArray("wind_speed_10m_max").optDouble(i),
-                            daily.getJSONArray("precipitation_sum").optDouble(i, 0.0)
-                        )
-                    )
-                }
-                main.post {
-                    tvTemp.text = "${Math.round(temp)}°"
-                    tvWeatherIcon.text = weatherIcon(code, isDay)
-                    val rainToday = days.firstOrNull()?.rain ?: 0.0
-                    tvWeatherInfo.text = "$place · ${weatherText(code)} · gefühlt ${Math.round(feels)}° · " +
-                        "Regen ${mm(rainToday)} · Wind ${Math.round(wind)} km/h"
-                    showForecast(days)
-                }
-            } catch (e: Exception) {
-                main.post {
-                    tvWeatherInfo.text = "$place · Wetter gerade nicht abrufbar"
+                val json = Net.get(Wx.forecastUrl(lat, lon))
+                JSONObject(json)
+                prefs.edit().putString("wxJson", json).putLong("wxTime", System.currentTimeMillis()).apply()
+                ok = true
+            } catch (_: Exception) { }
+            if (Netatmo.connected(prefs) && System.currentTimeMillis() - prefs.getLong("ntTime", 0L) > 4 * 60_000L) {
+                try { Netatmo.fetch(prefs) } catch (_: Exception) { }
+            }
+            main.post {
+                showWeather(place)
+                if (!ok) {
                     main.removeCallbacks(weatherLoop)
                     main.postDelayed(weatherLoop, 60 * 1000L)
                 }
@@ -688,32 +691,97 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun mm(v: Double): String =
-        if (v.isNaN() || v < 0.05) "0 mm" else String.format(Locale.GERMANY, "%.1f mm", v)
+    /** Wetter aus dem Zwischenspeicher anzeigen (Open-Meteo + ggf. Netatmo). */
+    private fun showWeather(place: String) {
+        val j = try { prefs.getString("wxJson", null)?.let { JSONObject(it) } } catch (_: Exception) { null }
+        val cur = j?.optJSONObject("current")
+        val daily = j?.optJSONObject("daily")
+        if (cur == null) {
+            tvWeatherInfo.text = "$place\nWetter nicht abrufbar"
+            return
+        }
+        var temp = cur.optDouble("temperature_2m", Double.NaN)
+        var hum = cur.optDouble("relative_humidity_2m", Double.NaN)
+        val code = cur.optInt("weather_code", -1)
+        var fromNetatmo = false
+        var indoor = Double.NaN
+        if (Netatmo.connected(prefs)) {
+            val dev = Netatmo.cached(prefs)
+            if (dev != null) {
+                val od = Netatmo.outdoor(dev)?.optJSONObject("dashboard_data")
+                if (prefs.getBoolean("ntOutdoor", true) && od != null && !od.optDouble("Temperature", Double.NaN).isNaN()) {
+                    temp = od.optDouble("Temperature")
+                    hum = od.optDouble("Humidity", hum)
+                    fromNetatmo = true
+                }
+                indoor = dev.optJSONObject("dashboard_data")?.optDouble("Temperature", Double.NaN) ?: Double.NaN
+            }
+        }
+        tvTemp.text = if (fromNetatmo) Wx.deg1(temp) else Wx.deg(temp)
+        tvWeatherIcon.text = Wx.icon(code, cur.optInt("is_day", 1) == 1)
+
+        val parts = mutableListOf<String>()
+        if (prefs.getBoolean("wxPlace", true)) parts.add(place)
+        if (prefs.getBoolean("wxFeels", false)) parts.add("gefühlt ${Wx.deg(cur.optDouble("apparent_temperature", Double.NaN))}")
+        if (prefs.getBoolean("wxWind", false)) parts.add("Wind ${Math.round(cur.optDouble("wind_speed_10m", 0.0))} km/h")
+        if (prefs.getBoolean("wxHum", false) && !hum.isNaN()) parts.add("${Math.round(hum)} % Feuchte")
+        if (prefs.getBoolean("ntIndoor", false) && !indoor.isNaN()) parts.add("innen ${Wx.deg1(indoor)}")
+        tvWeatherInfo.text = parts.joinToString("\n")
+        tvWeatherInfo.visibility = vis(!night && skin.details && parts.isNotEmpty())
+
+        val days = mutableListOf<DayForecast>()
+        val times = daily?.optJSONArray("time")
+        if (daily != null && times != null) {
+            val parse = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+            val wd = SimpleDateFormat("EEE", Locale.GERMANY)
+            for (i in 0 until minOf(times.length(), 3)) {
+                val label = when (i) {
+                    0 -> "Heute"
+                    1 -> "Morgen"
+                    else -> (try { wd.format(parse.parse(times.getString(i))!!) } catch (_: Exception) { "" }).trimEnd('.')
+                }
+                days.add(
+                    DayForecast(
+                        label,
+                        daily.optJSONArray("weather_code")?.optInt(i, -1) ?: -1,
+                        daily.optJSONArray("temperature_2m_max")?.optDouble(i) ?: Double.NaN,
+                        daily.optJSONArray("temperature_2m_min")?.optDouble(i) ?: Double.NaN,
+                        daily.optJSONArray("wind_speed_10m_max")?.optDouble(i) ?: Double.NaN,
+                        daily.optJSONArray("precipitation_sum")?.optDouble(i, 0.0) ?: 0.0,
+                        daily.optJSONArray("sunshine_duration")?.optDouble(i, Double.NaN) ?: Double.NaN
+                    )
+                )
+            }
+        }
+        showForecast(days)
+    }
+
+    private fun mm(v: Double): String = Wx.mm(v)
 
     private fun showForecast(days: List<DayForecast>) {
         lastForecast = days
         forecastRow.removeAllViews()
         val k = skin
-        val colW = dp(68).toInt()
+        val colW = dp(64).toInt()
+        val showSun = prefs.getBoolean("wxSun", true)
+        val showRain = prefs.getBoolean("wxRain", true)
         for (f in days) {
             val col = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
             }
-            fun line(t: String, sp: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
+            fun line(t: String, sp: Float, color: Int) = TextView(this).apply {
                 text = t
                 textSize = sp
                 setTextColor(color)
                 gravity = Gravity.CENTER
                 setSingleLine(true)
-                if (bold) setTypeface(typeface, Typeface.BOLD)
             }
-            col.addView(line(f.label, 12f, k.sub))
-            col.addView(line(weatherIcon(f.code, true), 24f, k.icon))
-            col.addView(line("${Math.round(f.max)}° / ${Math.round(f.min)}°", 14f, k.fg))
-            col.addView(line(mm(f.rain), 11f, k.wind))
-            col.addView(line("${Math.round(f.wind)} km/h", 11f, k.sub))
+            col.addView(line(f.label, 11f, k.sub))
+            col.addView(line(weatherIcon(f.code, true), 20f, k.icon))
+            col.addView(line("${Wx.deg(f.max)} / ${Wx.deg(f.min)}", 13f, k.fg))
+            if (showSun) col.addView(line("☀ " + Wx.sunHours(f.sun), 10f, k.sub))
+            if (showRain) col.addView(line("☂ " + Wx.mm(f.rain), 10f, k.wind))
             forecastRow.addView(col, LinearLayout.LayoutParams(colW, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
     }
@@ -804,7 +872,8 @@ class MainActivity : Activity() {
             }
         }
         val sorted = found.sortedBy { it.first }.map { it.second }.distinct()
-        return if (sorted.size > 4) sorted.take(3) + "+ ${sorted.size - 3} weitere" else sorted
+        val max = prefs.getInt("evMax", 5)
+        return if (sorted.size > max) sorted.take(max - 1) + "+ ${sorted.size - max + 1} weitere" else sorted
     }
 
     // ================================================================ Radio
