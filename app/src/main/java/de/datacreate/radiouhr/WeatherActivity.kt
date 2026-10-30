@@ -54,6 +54,8 @@ class WeatherActivity : Activity() {
         super.onDestroy()
     }
 
+    private fun useMeta() = prefs.getString("wxSource", "meta") == "meta"
+
     private fun refresh() {
         val lat = prefs.getFloat("wxLat", prefs.getFloat("lat", 47.8295f)).toDouble()
         val lon = prefs.getFloat("wxLon", prefs.getFloat("lon", 7.9447f)).toDouble()
@@ -62,6 +64,7 @@ class WeatherActivity : Activity() {
                 val json = Net.get(Wx.forecastUrl(lat, lon))
                 prefs.edit().putString("wxJson", json).putLong("wxTime", System.currentTimeMillis()).apply()
             } catch (_: Exception) { }
+            if (useMeta()) try { Meta.fetch(prefs, lat, lon) } catch (_: Exception) { }
             if (Netatmo.connected(prefs)) try { Netatmo.fetch(prefs) } catch (_: Exception) { }
             main.post { render() }
         }
@@ -160,7 +163,9 @@ class WeatherActivity : Activity() {
         todaySection(wx)
         hourlySection(wx)
         dailySection(wx)
-        list.addView(t("\nQuelle: Open-Meteo.com" + if (Netatmo.connected(prefs)) " · Netatmo" else "", 11f, sub))
+        val mb = if (useMeta()) Meta.cached(prefs) else null
+        list.addView(t("\nQuelle: " + (if (mb != null) "DC Wetter-Meta (Konsens aus ${mb.sources.size} Diensten) · " else "") +
+            "Open-Meteo.com" + if (Netatmo.connected(prefs)) " · Netatmo" else "", 11f, sub))
         scroll.post { scroll.scrollTo(0, y) }
     }
 
@@ -237,9 +242,22 @@ class WeatherActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         val code = cur.optInt("weather_code", -1)
-        row.addView(t(Wx.icon(code, cur.optInt("is_day", 1) == 1), 40f, iconCol))
-        row.addView(t("  " + Wx.deg(d(cur, "temperature_2m")), 44f, light = true))
-        row.addView(t("   " + Wx.text(code), 17f, sub))
+        var ic = Wx.icon(code, cur.optInt("is_day", 1) == 1)
+        var temp = d(cur, "temperature_2m")
+        var txt = Wx.text(code)
+        val mb = if (useMeta()) Meta.cached(prefs) else null
+        val mn = mb?.let { Meta.now(it) }
+        if (mb != null && mn != null && !mn.temp.isNaN()) {
+            temp = mn.temp
+            val h = Meta.localHour(mb, mn.t)
+            if (mn.cat != null) {
+                ic = Meta.icon(mn.cat, h < 7 || h >= 19)
+                txt = Meta.text(mn.cat)
+            }
+        }
+        row.addView(t(ic, 40f, iconCol))
+        row.addView(t("  " + Wx.deg(temp), 44f, light = true))
+        row.addView(t("   " + txt, 17f, sub))
         c.addView(row)
         grid(c, listOf(
             "gefühlt" to Wx.deg(d(cur, "apparent_temperature")),
@@ -259,11 +277,13 @@ class WeatherActivity : Activity() {
         section("Heute")
         val c = card()
         fun a(k: String) = dy.optJSONArray(k)
+        val m0 = if (useMeta()) Meta.cached(prefs)?.let { Meta.days(it, 1).firstOrNull() } else null
+        fun pick(meta: Double?, om: Double) = if (meta != null && !meta.isNaN()) meta else om
         grid(c, listOf(
-            "Höchst" to Wx.deg(a("temperature_2m_max")?.optDouble(0) ?: Double.NaN),
-            "Tiefst" to Wx.deg(a("temperature_2m_min")?.optDouble(0) ?: Double.NaN),
+            "Höchst" to Wx.deg(pick(m0?.tmax, a("temperature_2m_max")?.optDouble(0) ?: Double.NaN)),
+            "Tiefst" to Wx.deg(pick(m0?.tmin, a("temperature_2m_min")?.optDouble(0) ?: Double.NaN)),
             "Sonnenstunden" to Wx.sunHours(a("sunshine_duration")?.optDouble(0) ?: Double.NaN),
-            "Regen" to Wx.mm(a("precipitation_sum")?.optDouble(0) ?: Double.NaN),
+            "Regen" to Wx.mm(pick(m0?.psum, a("precipitation_sum")?.optDouble(0) ?: Double.NaN)),
             "Regenrisiko" to fmt(a("precipitation_probability_max")?.optDouble(0) ?: Double.NaN, "%"),
             "UV max" to fmt(a("uv_index_max")?.optDouble(0) ?: Double.NaN, "", 1),
             "Sonnenaufgang" to isoTime(a("sunrise")?.optString(0) ?: ""),
@@ -307,26 +327,28 @@ class WeatherActivity : Activity() {
         val c = card()
         val parse = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val wd = SimpleDateFormat("EEE d.M.", Locale.GERMANY)
+        val md = if (useMeta()) Meta.cached(prefs)?.let { Meta.days(it, 7) } ?: emptyList() else emptyList()
         for (i in 0 until times.length()) {
             val label = if (i == 0) "Heute" else try { wd.format(parse.parse(times.getString(i))!!) } catch (_: Exception) { "" }
             val code = dy.optJSONArray("weather_code")?.optInt(i, -1) ?: -1
+            val m = md.getOrNull(i)
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(8), 0, dp(8))
             }
             row.addView(t(label, 14f), LinearLayout.LayoutParams(dp(76), ViewGroup.LayoutParams.WRAP_CONTENT))
-            row.addView(t(Wx.icon(code), 20f, iconCol), LinearLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.WRAP_CONTENT))
+            row.addView(t(if (m?.cat != null) Meta.icon(m.cat) else Wx.icon(code), 20f, iconCol), LinearLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.WRAP_CONTENT))
             val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            mid.addView(t(Wx.text(code), 13f))
-            val rain = dy.optJSONArray("precipitation_sum")?.optDouble(i) ?: Double.NaN
+            mid.addView(t(if (m?.cat != null) Meta.text(m.cat) else Wx.text(code), 13f))
+            val rain = m?.psum?.takeUnless { it.isNaN() } ?: dy.optJSONArray("precipitation_sum")?.optDouble(i) ?: Double.NaN
             val prob = dy.optJSONArray("precipitation_probability_max")?.optDouble(i) ?: Double.NaN
             val sun = dy.optJSONArray("sunshine_duration")?.optDouble(i) ?: Double.NaN
             val wind = dy.optJSONArray("wind_speed_10m_max")?.optDouble(i) ?: Double.NaN
             mid.addView(t("☀ ${Wx.sunHours(sun)}  ☂ ${Wx.mm(rain)}${if (prob.isNaN()) "" else " (${Math.round(prob)} %)"}  ≈ ${fmt(wind, "km/h")}", 11f, sub))
             row.addView(mid, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            val mx = dy.optJSONArray("temperature_2m_max")?.optDouble(i) ?: Double.NaN
-            val mn = dy.optJSONArray("temperature_2m_min")?.optDouble(i) ?: Double.NaN
+            val mx = m?.tmax?.takeUnless { it.isNaN() } ?: dy.optJSONArray("temperature_2m_max")?.optDouble(i) ?: Double.NaN
+            val mn = m?.tmin?.takeUnless { it.isNaN() } ?: dy.optJSONArray("temperature_2m_min")?.optDouble(i) ?: Double.NaN
             row.addView(t("${Wx.deg(mx)} / ${Wx.deg(mn)}", 15f))
             c.addView(row)
         }

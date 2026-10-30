@@ -217,6 +217,16 @@ class SettingsActivity : Activity() {
         // Wetter
         section("Wetter")
         c = card()
+        val srcIds = listOf("meta", "om")
+        spinner(c, "Quelle", listOf("DC Wetter-Meta", "Open-Meteo"), maxOf(0, srcIds.indexOf(prefs.getString("wxSource", "meta")))) {
+            prefs.edit().putString("wxSource", srcIds[it]).apply()
+            main.post { build() }
+        }
+        if (prefs.getString("wxSource", "meta") == "meta") {
+            c.addView(small("Konsens (Median) aus mehreren Wetterdiensten – DWD ICON, ECMWF, GFS, Météo-France, UK Met Office, GEM, MET Norway – über dein Plugin. Sonnenstunden kommen weiter von Open-Meteo."))
+            button(c, "Server der Wetter-Meta …", Meta.base(prefs)) { askMetaBase() }
+        }
+        c = card()
         check(c, "Wetter für aktuellen Standort", "useGps", true,
             if (prefs.getBoolean("useGps", true)) null else "Fester Ort: ${prefs.getString("placeName", "Todtnau")}") { build() }
         button(c, "Festen Ort wählen …", prefs.getString("placeName", "Todtnau")) { askPlace() }
@@ -244,7 +254,18 @@ class SettingsActivity : Activity() {
                 setTextColor(col("#8CE08C"))
                 setPadding(dp(4), dp(10), 0, dp(6))
             })
+            val devs = Netatmo.all(prefs)
+            if (devs.size > 1) {
+                val ids = devs.map { it.optString("_id") }
+                val curId = prefs.getString("ntDevice", "") ?: ""
+                spinner(c, "Station", devs.map { Netatmo.label(it) }, maxOf(0, ids.indexOf(curId))) {
+                    Netatmo.select(prefs, ids[it])
+                    main.post { build() }
+                }
+            }
             check(c, "Außentemperatur von Netatmo statt Internet-Wetter", "ntOutdoor", true)
+            check(c, "Wettervorhersage für den Ort dieser Station", "ntPlace", false,
+                Netatmo.place(prefs)?.let { "Ort der Station: ${it.third}" })
             check(c, "Innentemperatur auf der Startseite zeigen", "ntIndoor", false)
             button(c, "Jetzt aktualisieren") { testNetatmo() }
             button(c, "Verbindung trennen") {
@@ -289,6 +310,46 @@ class SettingsActivity : Activity() {
     }
 
     // ------------------------------------------------------------ Aktionen
+
+    private fun askMetaBase() {
+        val et = EditText(this).apply {
+            setText(Meta.base(prefs))
+            setSingleLine(true)
+            setTextColor(Color.WHITE)
+        }
+        val box = LinearLayout(this).apply {
+            setPadding(dp(20), dp(10), dp(20), 0)
+            addView(et, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle("WordPress-Seite mit DC Wetter-Meta")
+            .setView(box)
+            .setPositiveButton("Speichern") { _, _ ->
+                prefs.edit().putString("metaBase", et.text.toString().trim()).apply()
+                testMeta()
+            }
+            .setNeutralButton("Standard") { _, _ ->
+                prefs.edit().remove("metaBase").apply()
+                testMeta()
+            }
+            .setNegativeButton("Abbrechen", null)
+            .show()
+    }
+
+    private fun testMeta() {
+        build()
+        val lat = prefs.getFloat("wxLat", prefs.getFloat("lat", 47.8295f)).toDouble()
+        val lon = prefs.getFloat("wxLon", prefs.getFloat("lon", 7.9447f)).toDouble()
+        io.execute {
+            val msg = try {
+                val b = Meta.fetch(prefs, lat, lon)
+                if (b == null) "Keine Daten" else "OK – ${b.sources.size} Wetterdienste"
+            } catch (e: Exception) {
+                "Fehler: ${e.message}"
+            }
+            main.post { Toast.makeText(this, msg, Toast.LENGTH_LONG).show() }
+        }
+    }
 
     private fun testNetatmo() {
         Toast.makeText(this, "Hole Netatmo-Daten …", Toast.LENGTH_SHORT).show()

@@ -180,13 +180,52 @@ object Netatmo {
         return p.getString("ntAccess", "") ?: ""
     }
 
-    /** Holt getstationsdata, speichert das Ergebnis und gibt das erste Gerät zurück. */
+    /** Holt getstationsdata, speichert alle Stationen und gibt die gewählte zurück. */
     fun fetch(p: SharedPreferences): JSONObject? {
         val token = accessToken(p)
         val res = Net.get("https://api.netatmo.com/api/getstationsdata", mapOf("Authorization" to "Bearer $token"))
-        val dev = JSONObject(res).optJSONObject("body")?.optJSONArray("devices")?.optJSONObject(0) ?: return null
-        p.edit().putString("ntJson", dev.toString()).putLong("ntTime", System.currentTimeMillis()).apply()
+        val devs = JSONObject(res).optJSONObject("body")?.optJSONArray("devices") ?: return null
+        if (devs.length() == 0) return null
+        val wanted = p.getString("ntDevice", "") ?: ""
+        var dev = devs.optJSONObject(0)
+        for (i in 0 until devs.length()) {
+            val d = devs.optJSONObject(i) ?: continue
+            if (d.optString("_id") == wanted) dev = d
+        }
+        p.edit()
+            .putString("ntAll", devs.toString())
+            .putString("ntJson", dev.toString())
+            .putLong("ntTime", System.currentTimeMillis())
+            .apply()
         return dev
+    }
+
+    /** Alle Stationen des Kontos (aus dem Zwischenspeicher). */
+    fun all(p: SharedPreferences): List<JSONObject> = try {
+        val a = org.json.JSONArray(p.getString("ntAll", "[]"))
+        (0 until a.length()).mapNotNull { a.optJSONObject(it) }
+    } catch (_: Exception) { emptyList() }
+
+    fun label(d: JSONObject): String {
+        val name = d.optString("home_name").ifEmpty { d.optString("station_name") }.ifEmpty { d.optString("module_name", "Station") }
+        val city = d.optJSONObject("place")?.optString("city").orEmpty()
+        return if (city.isNotEmpty() && !name.contains(city)) "$name · $city" else name
+    }
+
+    /** Station auswählen und ihre Daten als aktuelle übernehmen. */
+    fun select(p: SharedPreferences, id: String) {
+        val d = all(p).firstOrNull { it.optString("_id") == id } ?: return
+        p.edit().putString("ntDevice", id).putString("ntJson", d.toString()).apply()
+    }
+
+    /** Standort der gewählten Station: (lat, lon, Ort) oder null. */
+    fun place(p: SharedPreferences): Triple<Double, Double, String>? {
+        val d = cached(p) ?: return null
+        val pl = d.optJSONObject("place") ?: return null
+        val loc = pl.optJSONArray("location") ?: return null
+        if (loc.length() < 2) return null
+        val city = pl.optString("city").ifEmpty { d.optString("home_name").ifEmpty { d.optString("station_name", "Netatmo") } }
+        return Triple(loc.optDouble(1), loc.optDouble(0), city)
     }
 
     fun cached(p: SharedPreferences): JSONObject? = try {
@@ -207,6 +246,7 @@ object Netatmo {
     }
 
     fun disconnect(p: SharedPreferences) {
-        p.edit().remove("ntAccess").remove("ntRefresh").remove("ntExpires").remove("ntJson").remove("ntTime").apply()
+        p.edit().remove("ntAccess").remove("ntRefresh").remove("ntExpires").remove("ntJson").remove("ntTime")
+            .remove("ntAll").remove("ntDevice").apply()
     }
 }

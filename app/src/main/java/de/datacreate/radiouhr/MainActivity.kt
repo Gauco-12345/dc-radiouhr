@@ -68,7 +68,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 
 /** icon: "" = noch nicht gesucht, "-" = keins gefunden, sonst Bild-URL */
-data class DayForecast(val label: String, val code: Int, val max: Double, val min: Double, val wind: Double, val rain: Double, val sun: Double = Double.NaN)
+data class DayForecast(
+    val label: String, val code: Int, val max: Double, val min: Double, val wind: Double, val rain: Double,
+    val sun: Double = Double.NaN, val cat: String? = null
+)
 
 data class Station(val name: String, val url: String, val icon: String = "")
 
@@ -568,7 +571,10 @@ class MainActivity : Activity() {
     private fun placeName() = prefs.getString("placeName", "Todtnau") ?: "Todtnau"
 
     private fun refreshWeather() {
-        if (prefs.getBoolean("useGps", true) && hasLocationPerm()) {
+        val ntPlace = if (prefs.getBoolean("ntPlace", false) && Netatmo.connected(prefs)) Netatmo.place(prefs) else null
+        if (ntPlace != null) {
+            fetchWeather(ntPlace.first, ntPlace.second, ntPlace.third)
+        } else if (prefs.getBoolean("useGps", true) && hasLocationPerm()) {
             findLocation { loc ->
                 if (loc == null) {
                     fetchWeather(prefs.getFloat("lat", 47.8295f).toDouble(), prefs.getFloat("lon", 7.9447f).toDouble(), placeName())
@@ -678,6 +684,11 @@ class MainActivity : Activity() {
                 prefs.edit().putString("wxJson", json).putLong("wxTime", System.currentTimeMillis()).apply()
                 ok = true
             } catch (_: Exception) { }
+            if (prefs.getString("wxSource", "meta") == "meta") {
+                try {
+                    if (Meta.fetch(prefs, lat, lon) != null) ok = true
+                } catch (_: Exception) { }
+            }
             if (Netatmo.connected(prefs) && System.currentTimeMillis() - prefs.getLong("ntTime", 0L) > 4 * 60_000L) {
                 try { Netatmo.fetch(prefs) } catch (_: Exception) { }
             }
@@ -703,6 +714,15 @@ class MainActivity : Activity() {
         var temp = cur.optDouble("temperature_2m", Double.NaN)
         var hum = cur.optDouble("relative_humidity_2m", Double.NaN)
         val code = cur.optInt("weather_code", -1)
+        var icon = Wx.icon(code, cur.optInt("is_day", 1) == 1)
+        val meta = if (prefs.getString("wxSource", "meta") == "meta") Meta.cached(prefs) else null
+        val metaNow = meta?.let { Meta.now(it) }
+        if (meta != null && metaNow != null && !metaNow.temp.isNaN()) {
+            temp = metaNow.temp
+            if (!metaNow.rh.isNaN()) hum = metaNow.rh
+            val h = Meta.localHour(meta, metaNow.t)
+            if (metaNow.cat != null) icon = Meta.icon(metaNow.cat, h < 7 || h >= 19)
+        }
         var fromNetatmo = false
         var indoor = Double.NaN
         if (Netatmo.connected(prefs)) {
@@ -718,7 +738,7 @@ class MainActivity : Activity() {
             }
         }
         tvTemp.text = if (fromNetatmo) Wx.deg1(temp) else Wx.deg(temp)
-        tvWeatherIcon.text = Wx.icon(code, cur.optInt("is_day", 1) == 1)
+        tvWeatherIcon.text = icon
 
         val parts = mutableListOf<String>()
         if (prefs.getBoolean("wxPlace", true)) parts.add(place)
@@ -753,6 +773,21 @@ class MainActivity : Activity() {
                 )
             }
         }
+        if (meta != null) {
+            val md = Meta.days(meta, 3)
+            for (i in days.indices) {
+                val m = md.getOrNull(i) ?: continue
+                val o = days[i]
+                days[i] = DayForecast(
+                    o.label, o.code,
+                    if (m.tmax.isNaN()) o.max else m.tmax,
+                    if (m.tmin.isNaN()) o.min else m.tmin,
+                    if (m.wind.isNaN()) o.wind else m.wind,
+                    if (m.psum.isNaN()) o.rain else m.psum,
+                    o.sun, m.cat
+                )
+            }
+        }
         showForecast(days)
     }
 
@@ -778,7 +813,7 @@ class MainActivity : Activity() {
                 setSingleLine(true)
             }
             col.addView(line(f.label, 11f, k.sub))
-            col.addView(line(weatherIcon(f.code, true), 20f, k.icon))
+            col.addView(line(if (f.cat != null) Meta.icon(f.cat) else weatherIcon(f.code, true), 20f, k.icon))
             col.addView(line("${Wx.deg(f.max)} / ${Wx.deg(f.min)}", 13f, k.fg))
             if (showSun) col.addView(line("☀ " + Wx.sunHours(f.sun), 10f, k.sub))
             if (showRain) col.addView(line("☂ " + Wx.mm(f.rain), 10f, k.wind))
