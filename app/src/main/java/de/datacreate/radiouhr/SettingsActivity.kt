@@ -361,6 +361,15 @@ class SettingsActivity : ScaledActivity() {
         check(c, "Beim Start automatisch abspielen", "autoplay", false)
         c.addView(small("Sender hinzufügen: ＋ auf der Startseite. Entfernen: Sender lange drücken."))
 
+        // Sichern
+        section("Sichern & Übertragen")
+        c = card()
+        button(c, "Alle Daten exportieren …", "Sender, Wecker, Design, Wetter, Nachtzeiten, Netatmo-Zugang – als Datei, z. B. für ein zweites Gerät") {
+            exportData()
+        }
+        button(c, "Daten importieren …", "ersetzt alle Einstellungen dieses Geräts") { importData() }
+        c.addView(small("Die Datei enthält den Netatmo-Zugang – nicht öffentlich weitergeben."))
+
         list.addView(small("\nDC Radiouhr · Datacreate"))
     }
 
@@ -448,6 +457,116 @@ class SettingsActivity : ScaledActivity() {
             .setNeutralButton("Mo–Fr") { _, _ -> onSet(0x1F) }
             .setNegativeButton("Abbrechen", null)
             .show()
+    }
+
+    // ------------------------------------------------------------ Export / Import
+
+    private val REQ_EXPORT = 41
+    private val REQ_IMPORT = 42
+
+    /** Zwischenspeicher, die nicht mitgenommen werden (werden neu geladen). */
+    private val SKIP = setOf("wxJson", "wxTime", "metaJson", "metaTime", "lastFire", "snoozeAt", "snoozeStation", "gpsName")
+
+    private fun exportData() {
+        val name = "DC-Radiouhr-" + SimpleDateFormat("yyyy-MM-dd", Locale.GERMANY).format(Date()) + ".json"
+        val i = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+            putExtra(Intent.EXTRA_TITLE, name)
+        }
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, REQ_EXPORT)
+        } catch (_: Exception) {
+            Toast.makeText(this, "Kein Dateimanager verfügbar", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun importData() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, REQ_IMPORT)
+        } catch (_: Exception) {
+            Toast.makeText(this, "Kein Dateimanager verfügbar", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun buildExport(): String {
+        val data = JSONObject()
+        for ((key, v) in prefs.all) {
+            if (key in SKIP || v == null) continue
+            val t = when (v) {
+                is String -> "s"
+                is Int -> "i"
+                is Long -> "l"
+                is Float -> "f"
+                is Boolean -> "b"
+                else -> continue
+            }
+            data.put(key, JSONObject().put("t", t).put("v", if (v is Float) v.toDouble() else v))
+        }
+        return JSONObject()
+            .put("app", "DC Radiouhr")
+            .put("format", 1)
+            .put("exported", SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.GERMANY).format(Date()))
+            .put("prefs", data)
+            .toString(2)
+    }
+
+    private fun applyImport(json: String): Int {
+        val root = JSONObject(json)
+        if (root.optString("app") != "DC Radiouhr") throw IllegalArgumentException("Keine DC-Radiouhr-Datei")
+        val data = root.getJSONObject("prefs")
+        val e = prefs.edit().clear()
+        var n = 0
+        val keys = data.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val o = data.optJSONObject(key) ?: continue
+            when (o.optString("t")) {
+                "s" -> e.putString(key, o.optString("v"))
+                "i" -> e.putInt(key, o.optInt("v"))
+                "l" -> e.putLong(key, o.optLong("v"))
+                "f" -> e.putFloat(key, o.optDouble("v").toFloat())
+                "b" -> e.putBoolean(key, o.optBoolean("v"))
+                else -> continue
+            }
+            n++
+        }
+        // Netatmo-Zugriffstoken neu holen lassen (Refresh-Token bleibt)
+        e.remove("ntAccess").putLong("ntExpires", 0L)
+        e.commit()
+        return n
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data
+        if (resultCode != RESULT_OK || uri == null) return
+        try {
+            if (requestCode == REQ_EXPORT) {
+                contentResolver.openOutputStream(uri, "wt")?.use { it.write(buildExport().toByteArray(Charsets.UTF_8)) }
+                Toast.makeText(this, "Exportiert", Toast.LENGTH_LONG).show()
+            } else if (requestCode == REQ_IMPORT) {
+                val json = contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } ?: return
+                val n = applyImport(json)
+                Alarms.schedule(this)
+                Toast.makeText(this, "$n Einstellungen importiert – App startet neu", Toast.LENGTH_LONG).show()
+                main.postDelayed({
+                    startActivity(Intent(this, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+                    finish()
+                }, 800)
+            }
+        } catch (e: Exception) {
+            Toast.makeText(this, "Fehler: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     // ------------------------------------------------------------ Aktionen
