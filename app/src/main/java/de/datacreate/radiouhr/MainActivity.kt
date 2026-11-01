@@ -75,7 +75,7 @@ data class DayForecast(
 
 data class Station(val name: String, val url: String, val icon: String = "")
 
-class MainActivity : Activity() {
+class MainActivity : ScaledActivity() {
 
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newFixedThreadPool(2)
@@ -139,8 +139,14 @@ class MainActivity : Activity() {
         @Suppress("DEPRECATION")
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
-                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
         )
+        if (Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
         volumeControlStream = AudioManager.STREAM_MUSIC
 
         prefs = getSharedPreferences("radiouhr", MODE_PRIVATE)
@@ -210,13 +216,18 @@ class MainActivity : Activity() {
         setNight(false)
         askPermissionsIfNeeded()
 
-        if (prefs.getBoolean("autoplay", false) && stations.isNotEmpty()) playCurrent()
+        if (prefs.getBoolean("autoplay", false) && stations.isNotEmpty() && intent?.action != Alarms.ACTION) playCurrent()
+        Alarms.schedule(this)
+        updateNextAlarm()
+        if (intent?.action == Alarms.ACTION) main.post { fireAlarm() }
     }
 
     override fun onResume() {
         super.onResume()
         hideSystemUi()
         skin = loadSkin()
+        updateNextAlarm()
+        Alarms.schedule(this)
         lastAutoNight = null
         applyLook()
         checkAutoNight(Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
@@ -233,6 +244,155 @@ class MainActivity : Activity() {
         main.removeCallbacks(tick)
         main.removeCallbacks(weatherLoop)
         // Radio läuft bewusst weiter
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == Alarms.ACTION) fireAlarm()
+    }
+
+    // ================================================================ Radiowecker
+
+    private var alarming = false
+    private var nextAlarmLabel = ""
+    private var ringtone: android.media.Ringtone? = null
+    private var alarmOverlay: View? = null
+    private var fadeStart = 0L
+
+    private fun updateNextAlarm() {
+        val n = Alarms.next(prefs)
+        nextAlarmLabel = if (n != null && n.first - System.currentTimeMillis() < 24 * 3600_000L) "   ⏰ " + timeFmt.format(Date(n.first)) else ""
+    }
+
+    private fun fireAlarm() {
+        val minuteKey = System.currentTimeMillis() / 60_000L
+        if (prefs.getLong("lastFire", 0L) == minuteKey || alarming) return
+        prefs.edit().putLong("lastFire", minuteKey).apply()
+        val due = Alarms.dueNow(prefs)
+        var url = prefs.getString("snoozeStation", "") ?: ""
+        if (due != null) {
+            url = due.station
+            if (due.days and Days.ALL == 0) {
+                val list = Alarms.load(prefs)
+                list.firstOrNull { it.id == due.id }?.on = false
+                Alarms.save(this, prefs, list)
+            }
+        }
+        prefs.edit().putLong("snoozeAt", 0L).apply()
+        Alarms.schedule(this)
+        updateNextAlarm()
+        startAlarm(url)
+    }
+
+    private val fadeStep = object : Runnable {
+        override fun run() {
+            val fade = prefs.getInt("alarmFade", 60) * 1000L
+            val f = if (fade <= 0) 1f else ((System.currentTimeMillis() - fadeStart).toFloat() / fade).coerceIn(0.05f, 1f)
+            player.volume = f
+            if (f < 1f && alarming) main.postDelayed(this, 500)
+        }
+    }
+
+    private val alarmFallback = Runnable {
+        if (alarming && !player.isPlaying) {
+            try {
+                val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_ALARM)
+                    ?: android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+                ringtone = android.media.RingtoneManager.getRingtone(this, uri)
+                ringtone?.play()
+                tvNowPlaying.text = "Sender nicht erreichbar – Weckton"
+            } catch (_: Exception) { }
+        }
+    }
+
+    private val alarmAutoEnd = Runnable { if (alarming) endAlarm(stopRadio = true) }
+
+    private fun startAlarm(url: String) {
+        alarming = true
+        main.removeCallbacks(backToNight)
+        if (night) setNight(false)
+        val idx = stations.indexOfFirst { it.url == url }
+        if (idx >= 0) current = idx
+        val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        audio.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(max * prefs.getInt("alarmVol", 50) / 100f).coerceAtLeast(1), 0)
+        fadeStart = System.currentTimeMillis()
+        player.volume = if (prefs.getInt("alarmFade", 60) > 0) 0.05f else 1f
+        playCurrent()
+        main.removeCallbacks(fadeStep)
+        main.post(fadeStep)
+        main.removeCallbacks(alarmFallback)
+        main.postDelayed(alarmFallback, 30_000L)
+        main.removeCallbacks(alarmAutoEnd)
+        val end = prefs.getInt("alarmEnd", 60)
+        if (end > 0) main.postDelayed(alarmAutoEnd, end * 60_000L)
+        showAlarmOverlay()
+    }
+
+    private fun endAlarm(stopRadio: Boolean) {
+        alarming = false
+        main.removeCallbacks(fadeStep)
+        main.removeCallbacks(alarmFallback)
+        main.removeCallbacks(alarmAutoEnd)
+        try { ringtone?.stop() } catch (_: Exception) { }
+        ringtone = null
+        player.volume = 1f
+        if (stopRadio) stopRadio()
+        alarmOverlay?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        alarmOverlay = null
+        syncKnob()
+    }
+
+    private fun snooze() {
+        val min = prefs.getInt("snoozeMin", 9)
+        val url = stations.getOrNull(current)?.url ?: ""
+        endAlarm(stopRadio = true)
+        val at = System.currentTimeMillis() + min * 60_000L
+        prefs.edit().putLong("snoozeAt", at).putString("snoozeStation", url).apply()
+        Alarms.schedule(this)
+        updateNextAlarm()
+        tvNowPlaying.visibility = View.VISIBLE
+        tvNowPlaying.text = "Schlummern bis " + timeFmt.format(Date(at))
+    }
+
+    private fun showAlarmOverlay() {
+        alarmOverlay?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        val frame = findViewById<android.widget.FrameLayout>(R.id.frame)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.argb(235, 0, 0, 0))
+            isClickable = true
+            val p = dp(24).toInt()
+            setPadding(p, p, p, p)
+        }
+        fun tv(t: String, sp: Float, color: Int) = TextView(this).apply {
+            text = t
+            textSize = sp
+            setTextColor(color)
+            gravity = Gravity.CENTER
+        }
+        box.addView(tv("⏰  Guten Morgen", 22f, skin.accent))
+        box.addView(tv(timeFmt.format(Date()), 72f, Color.WHITE).apply { typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL) })
+        box.addView(tv(stations.getOrNull(current)?.name ?: "", 18f, col("#BBBBBB")))
+        fun big(t: String, fill: Int, txt: Int, onClick: () -> Unit) = TextView(this).apply {
+            text = t
+            textSize = 20f
+            setTextColor(txt)
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                cornerRadius = dp(18)
+                setColor(fill)
+            }
+            setOnClickListener { onClick() }
+        }
+        val lp = { LinearLayout.LayoutParams(dp(300).toInt(), dp(64).toInt()).apply { topMargin = dp(14).toInt() } }
+        box.addView(View(this), LinearLayout.LayoutParams(1, dp(16).toInt()))
+        box.addView(big("Schlummern  ·  ${prefs.getInt("snoozeMin", 9)} min", skin.accent, Color.BLACK) { snooze() }, lp())
+        box.addView(big("Radio weiterhören", col("#333333"), Color.WHITE) { endAlarm(stopRadio = false) }, lp())
+        box.addView(big("Aus", col("#333333"), Color.WHITE) { endAlarm(stopRadio = true) }, lp())
+        frame.addView(box, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        alarmOverlay = box
     }
 
     override fun onDestroy() {
@@ -332,7 +492,7 @@ class MainActivity : Activity() {
         override fun run() {
             val now = Date()
             tvTime.text = timeFmt.format(now)
-            tvDate.text = dateFmt.format(now)
+            tvDate.text = dateFmt.format(now) + nextAlarmLabel
 
             val cal = Calendar.getInstance()
             clockView.setTime(cal)
@@ -345,6 +505,11 @@ class MainActivity : Activity() {
                 clockPanel.translationY = (rnd.nextInt(13) - 6) * dp(1)
                 checkAutoNight(cal.get(Calendar.HOUR_OF_DAY))
                 if (!first) loadEvents()
+                updateNextAlarm()
+                if (!first) {
+                    val snooze = prefs.getLong("snoozeAt", 0L)
+                    if (Alarms.dueNow(prefs) != null || (snooze > 0 && snooze <= System.currentTimeMillis() + 30_000L)) fireAlarm()
+                }
             }
 
             syncKnob()
@@ -376,27 +541,22 @@ class MainActivity : Activity() {
         return r
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun checkAutoNight(hour: Int) {
         if (!prefs.getBoolean("autoNight", true)) {
             lastAutoNight = null
             return
         }
-        val should = nightAt(hour)
+        val should = NightZones.isNight(prefs)
         if (lastAutoNight != should) {
             lastAutoNight = should
-            setNight(should)
+            if (!(should && alarming)) setNight(should)
         }
     }
 
-    private fun nightAt(h: Int): Boolean {
-        val from = prefs.getInt("nightFrom", 22)
-        val to = prefs.getInt("nightTo", 7)
-        return if (from == to) false else if (from < to) h in from until to else (h >= from || h < to)
-    }
+    private fun isNightHour(): Boolean = NightZones.isNight(prefs)
 
-    private fun isNightHour(): Boolean = nightAt(Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
-
-    private val backToNight = Runnable { if (!night && isNightHour()) setNight(true) }
+    private val backToNight = Runnable { if (!night && !alarming && isNightHour()) setNight(true) }
 
     private fun setNight(on: Boolean) {
         night = on

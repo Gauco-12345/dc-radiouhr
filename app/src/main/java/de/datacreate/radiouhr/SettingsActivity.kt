@@ -31,7 +31,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 /** Ordentliche Einstellungsseite. */
-class SettingsActivity : Activity() {
+class SettingsActivity : ScaledActivity() {
 
     private lateinit var prefs: SharedPreferences
     private lateinit var list: LinearLayout
@@ -214,17 +214,25 @@ class SettingsActivity : Activity() {
             prefs.edit().putString("clockStyle", clocks[it].first).apply()
         }
 
+        val zooms = listOf(80, 90, 100, 110, 125, 140, 160)
+        spinner(c, "Größe", zooms.map { if (it == 100) "automatisch" else "$it %" }, maxOf(0, zooms.indexOf(prefs.getInt("uiZoom", 100)))) {
+            prefs.edit().putInt("uiZoom", zooms[it]).apply()
+            main.post { recreate() }
+        }
+        c.addView(small("„automatisch“ passt alles an die Bildschirmgröße an (Handy, 8-Zoll-Tablet …). Mit % feiner einstellen."))
+
         // Wetter
         section("Wetter")
         c = card()
         val srcIds = listOf("meta", "om")
-        spinner(c, "Quelle", listOf("DC Wetter-Meta", "Open-Meteo"), maxOf(0, srcIds.indexOf(prefs.getString("wxSource", "meta")))) {
+        spinner(c, "Quelle", listOf("Mehrere Wetterdienste", "Open-Meteo"), maxOf(0, srcIds.indexOf(prefs.getString("wxSource", "meta")))) {
             prefs.edit().putString("wxSource", srcIds[it]).apply()
             main.post { build() }
         }
         if (prefs.getString("wxSource", "meta") == "meta") {
-            c.addView(small("Konsens (Median) aus mehreren Wetterdiensten – DWD ICON, ECMWF, GFS, Météo-France, UK Met Office, GEM, MET Norway – über dein Plugin. Sonnenstunden kommen weiter von Open-Meteo."))
-            button(c, "Server der Wetter-Meta …", Meta.base(prefs)) { askMetaBase() }
+            c.addView(small("Konsens (Median) wie bei DC Wetter-Meta – direkt abgefragt bei DWD ICON, ECMWF, NOAA GFS, Météo-France, UK Met Office, GEM Kanada und MET Norway. Sonnenstunden, Sonnenauf-/untergang und UV von Open-Meteo."))
+            check(c, "Zusätzlich DWD MOSMIX (Wetterstation)", "wxMosmix", false)
+            button(c, "Wetterdienste testen") { testMeta() }
         }
         c = card()
         check(c, "Wetter für aktuellen Standort", "useGps", true,
@@ -291,13 +299,60 @@ class SettingsActivity : Activity() {
         // Nacht
         section("Nachtmodus")
         c = card()
-        check(c, "Automatisch einschalten", "autoNight", true, "Nachts nur die Uhr, gedimmt in Rot.")
-        val hours = (0..23).toList()
-        spinner(c, "von", hours.map { String.format("%02d:00", it) }, prefs.getInt("nightFrom", 22)) {
-            prefs.edit().putInt("nightFrom", it).apply()
+        check(c, "Automatisch einschalten", "autoNight", true, "Nachts nur die Uhr, gedimmt in Rot. Mehrere Zeiträume möglich, z. B. auch Mittagsschlaf.")
+        val zones = NightZones.load(prefs)
+        zones.forEachIndexed { i, z ->
+            timeRow(c, "${hhmm(z.from)} – ${hhmm(z.to)}", Days.label(z.days),
+                onFrom = { pickTime(z.from) { v -> z.from = v; NightZones.save(prefs, zones); build() } },
+                onTo = { pickTime(z.to) { v -> z.to = v; NightZones.save(prefs, zones); build() } },
+                onDays = { pickDays(z.days) { v -> z.days = v; NightZones.save(prefs, zones); build() } },
+                onDelete = { zones.removeAt(i); NightZones.save(prefs, zones); build() })
         }
-        spinner(c, "bis", hours.map { String.format("%02d:00", it) }, prefs.getInt("nightTo", 7)) {
-            prefs.edit().putInt("nightTo", it).apply()
+        button(c, "＋ Zeitraum hinzufügen") {
+            zones.add(NightZones.Zone(13 * 60, 14 * 60 + 30))
+            NightZones.save(prefs, zones)
+            build()
+        }
+
+        // Wecker
+        section("Radiowecker")
+        c = card()
+        val alarms = Alarms.load(prefs)
+        val st = stationList()
+        if (alarms.isEmpty()) c.addView(small("Noch kein Wecker. Der Wecker spielt den gewählten Sender, blendet langsam ein und hat eine Schlummertaste."))
+        alarms.forEachIndexed { i, a ->
+            alarmRow(c, a, st, onChange = { Alarms.save(this, prefs, alarms); build() }, onDelete = {
+                alarms.removeAt(i)
+                Alarms.save(this, prefs, alarms)
+                build()
+            })
+        }
+        button(c, "＋ Wecker hinzufügen") {
+            pickTime(6 * 60 + 30) { v ->
+                alarms.add(Alarms.Alarm(System.currentTimeMillis(), v, 0x1F, st.firstOrNull()?.second ?: "", true))
+                Alarms.save(this, prefs, alarms)
+                build()
+            }
+        }
+        if (alarms.isNotEmpty()) {
+            val vols = listOf(20, 30, 40, 50, 60, 70, 80, 100)
+            spinner(c, "Lautstärke", vols.map { "$it %" }, maxOf(0, vols.indexOf(prefs.getInt("alarmVol", 50)))) {
+                prefs.edit().putInt("alarmVol", vols[it]).apply()
+            }
+            val fades = listOf(0, 30, 60, 120, 300)
+            spinner(c, "Einblenden", fades.map { if (it == 0) "sofort" else if (it < 60) "$it s" else "${it / 60} min" },
+                maxOf(0, fades.indexOf(prefs.getInt("alarmFade", 60)))) {
+                prefs.edit().putInt("alarmFade", fades[it]).apply()
+            }
+            val snoozes = listOf(5, 9, 10, 15, 20)
+            spinner(c, "Schlummern", snoozes.map { "$it min" }, maxOf(0, snoozes.indexOf(prefs.getInt("snoozeMin", 9)))) {
+                prefs.edit().putInt("snoozeMin", snoozes[it]).apply()
+            }
+            val ends = listOf(0, 30, 60, 90, 120)
+            spinner(c, "Automatisch aus nach", ends.map { if (it == 0) "nie" else "$it min" }, maxOf(0, ends.indexOf(prefs.getInt("alarmEnd", 60)))) {
+                prefs.edit().putInt("alarmEnd", ends[it]).apply()
+            }
+            c.addView(small("Klappt der Sender beim Wecken nicht, ertönt nach 30 Sekunden der normale Weckton."))
         }
 
         // Radio
@@ -309,32 +364,93 @@ class SettingsActivity : Activity() {
         list.addView(small("\nDC Radiouhr · Datacreate"))
     }
 
-    // ------------------------------------------------------------ Aktionen
+    private fun stationList(): List<Pair<String, String>> = try {
+        val a = JSONArray(prefs.getString("stations", "[]"))
+        (0 until a.length()).map { a.getJSONObject(it).let { o -> o.optString("name") to o.optString("url") } }
+    } catch (_: Exception) { emptyList() }
 
-    private fun askMetaBase() {
-        val et = EditText(this).apply {
-            setText(Meta.base(prefs))
-            setSingleLine(true)
-            setTextColor(Color.WHITE)
+    private fun chip(text: String, big: Boolean = false, onClick: () -> Unit) = TextView(this).apply {
+        this.text = text
+        textSize = if (big) 22f else 14f
+        setTextColor(Color.WHITE)
+        gravity = Gravity.CENTER
+        setPadding(dp(10), dp(6), dp(10), dp(6))
+        background = GradientDrawable().apply {
+            cornerRadius = dp(10).toFloat()
+            setColor(col("#2C2C2C"))
         }
+        setOnClickListener { onClick() }
+    }
+
+    private fun timeRow(parent: LinearLayout, label: String, sub: String, onFrom: () -> Unit, onTo: () -> Unit, onDays: () -> Unit, onDelete: () -> Unit) {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val parts = label.split(" – ")
+        row.addView(chip(parts[0], true, onFrom))
+        row.addView(TextView(this).apply { text = "  bis  "; setTextColor(col("#9A9A9A")); textSize = 14f })
+        row.addView(chip(parts.getOrElse(1) { "" }, true, onTo))
+        row.addView(View(this), LinearLayout.LayoutParams(dp(10), 1))
+        row.addView(chip(sub, false, onDays), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(chip("✕", false, onDelete), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) })
+        parent.addView(row)
+    }
+
+    private fun alarmRow(parent: LinearLayout, a: Alarms.Alarm, stations: List<Pair<String, String>>, onChange: () -> Unit, onDelete: () -> Unit) {
         val box = LinearLayout(this).apply {
-            setPadding(dp(20), dp(10), dp(20), 0)
-            addView(et, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8), 0, dp(10))
         }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        row.addView(CheckBox(this).apply {
+            isChecked = a.on
+            setOnCheckedChangeListener { _, v -> a.on = v; onChange() }
+        })
+        row.addView(chip(hhmm(a.min), true) { pickTime(a.min) { v -> a.min = v; a.on = true; onChange() } })
+        row.addView(View(this), LinearLayout.LayoutParams(dp(10), 1))
+        row.addView(chip(Days.label(a.days)) { pickDays(a.days, allowNone = true) { v -> a.days = v; onChange() } },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(chip("✕", false, onDelete), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) })
+        box.addView(row)
+        if (stations.isNotEmpty()) {
+            val idx = maxOf(0, stations.indexOfFirst { it.second == a.station })
+            spinner(box, "Sender", stations.map { it.first }, idx) { a.station = stations[it].second; onChange() }
+        }
+        if (a.on) {
+            val t = Alarms.nextTime(a)
+            box.addView(small("klingelt " + SimpleDateFormat("EEEE, d. MMMM 'um' HH:mm", Locale.GERMANY).format(Date(t))))
+        }
+        parent.addView(box)
+    }
+
+    private fun pickTime(min: Int, onSet: (Int) -> Unit) {
+        android.app.TimePickerDialog(this, android.R.style.Theme_Material_Dialog_Alert, { _, h, m -> onSet(h * 60 + m) },
+            min / 60, min % 60, true).show()
+    }
+
+    private fun pickDays(mask: Int, allowNone: Boolean = false, onSet: (Int) -> Unit) {
+        val names = arrayOf("Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag")
+        val checked = BooleanArray(7) { mask and (1 shl it) != 0 }
         AlertDialog.Builder(this, dlgTheme)
-            .setTitle("WordPress-Seite mit DC Wetter-Meta")
-            .setView(box)
-            .setPositiveButton("Speichern") { _, _ ->
-                prefs.edit().putString("metaBase", et.text.toString().trim()).apply()
-                testMeta()
+            .setTitle(if (allowNone) "Wochentage (keiner = einmalig)" else "Wochentage")
+            .setMultiChoiceItems(names, checked) { _, i, v -> checked[i] = v }
+            .setPositiveButton("OK") { _, _ ->
+                var m = 0
+                for (i in 0..6) if (checked[i]) m = m or (1 shl i)
+                if (m == 0 && !allowNone) m = Days.ALL
+                onSet(m)
             }
-            .setNeutralButton("Standard") { _, _ ->
-                prefs.edit().remove("metaBase").apply()
-                testMeta()
-            }
+            .setNeutralButton("Mo–Fr") { _, _ -> onSet(0x1F) }
             .setNegativeButton("Abbrechen", null)
             .show()
     }
+
+    // ------------------------------------------------------------ Aktionen
 
     private fun testMeta() {
         build()
@@ -343,7 +459,7 @@ class SettingsActivity : Activity() {
         io.execute {
             val msg = try {
                 val b = Meta.fetch(prefs, lat, lon)
-                if (b == null) "Keine Daten" else "OK – ${b.sources.size} Wetterdienste"
+                if (b == null) "Keine Daten" else "OK – ${b.sources.size} Wetterdienste: " + b.sources.keys.joinToString(", ") { Meta.NAMES[it] ?: it }
             } catch (e: Exception) {
                 "Fehler: ${e.message}"
             }

@@ -31,7 +31,7 @@ import java.util.UUID
 import java.util.concurrent.Executors
 
 /** Assistent zum Verbinden der Netatmo-Wetterstation (OAuth2). */
-class NetatmoAuthActivity : Activity() {
+class NetatmoAuthActivity : ScaledActivity() {
 
     private lateinit var prefs: SharedPreferences
     private val main = Handler(Looper.getMainLooper())

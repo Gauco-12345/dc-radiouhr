@@ -22,7 +22,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 /** Ausführliche Wetterseite: Netatmo-Station, aktuelle Werte, 24 Stunden, 7 Tage. */
-class WeatherActivity : Activity() {
+class WeatherActivity : ScaledActivity() {
 
     private lateinit var prefs: SharedPreferences
     private lateinit var list: LinearLayout
