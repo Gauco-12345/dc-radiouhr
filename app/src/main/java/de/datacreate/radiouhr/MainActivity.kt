@@ -567,7 +567,7 @@ class MainActivity : ScaledActivity() {
                 lp.height = (clockView.measuredHeight - over).coerceAtLeast(dp(60).toInt())
                 clockView.layoutParams = lp
             }
-            clockPanel.post(this@MainActivity.fitClock)
+            clockPanel.post(this)
         }
     }
 
