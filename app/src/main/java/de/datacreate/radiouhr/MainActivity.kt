@@ -117,6 +117,7 @@ class MainActivity : ScaledActivity() {
     private lateinit var skin: Skin
     private var lastForecast: List<DayForecast> = emptyList()
     private lateinit var knob: KnobView
+    private lateinit var volSlider: VolumeSlider
 
     private val stations = mutableListOf<Station>()
     private var current = 0
@@ -188,6 +189,11 @@ class MainActivity : ScaledActivity() {
         tvStation.setOnLongClickListener {
             showStations()
             true
+        }
+        volSlider = findViewById(R.id.volSlider)
+        volSlider.onChange = { v ->
+            val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            audio.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(v * max), 0)
         }
         knob = findViewById(R.id.knob)
         knob.onChange = { v ->
@@ -531,9 +537,11 @@ class MainActivity : ScaledActivity() {
 
     /** Drehrad an Systemlautstärke angleichen (z. B. nach Lautstärketasten). */
     private fun syncKnob() {
-        if (knob.dragging) return
         val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        if (max > 0) knob.value = audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max
+        if (max <= 0) return
+        val v = audio.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max
+        if (!knob.dragging) knob.value = v
+        if (::volSlider.isInitialized && !volSlider.dragging) volSlider.value = v
     }
 
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
@@ -682,7 +690,7 @@ class MainActivity : ScaledActivity() {
         favScroll.visibility = View.GONE
         favGrid.visibility = vis(k.presets != Presets.NONE)
         btnTimer.visibility = vis(k.extraButtons)
-        btnNight.visibility = vis(k.extraButtons)
+        btnNight.visibility = View.GONE
         if (on || !k.events) tvEvents.visibility = View.GONE else loadEvents()
 
         // Tasten
@@ -697,9 +705,18 @@ class MainActivity : ScaledActivity() {
         timerIcon.setColorFilter(tint)
         (btnNight as ImageView).setColorFilter(tint)
         btnSettings.setColorFilter(tint)
-        val ip = if (k.btn == BtnStyle.IVORY) dp(3).toInt() else 0
+        val ip = if (k.btn == BtnStyle.IVORY) dp(2).toInt() else 0
         for (v in listOf<View>(btnPlay, btnNight, btnSettings, btnAdd, timerIcon)) {
-            v.setPadding(dp(10).toInt(), dp(10).toInt() - ip, dp(10).toInt(), dp(10).toInt() + ip)
+            v.setPadding(dp(14).toInt(), dp(14).toInt() - ip, dp(14).toInt(), dp(14).toInt() + ip)
+        }
+        btnNight.visibility = View.GONE
+        knob.visibility = View.GONE
+        volSlider.visibility = vis(!on)
+        volSlider.fillColor = k.accent
+        volSlider.iconColor = k.fg
+        volSlider.trackColor = Color.argb(60, Color.red(k.fg), Color.green(k.fg), Color.blue(k.fg))
+        volSlider.layoutParams = (volSlider.layoutParams as android.widget.FrameLayout.LayoutParams).apply {
+            height = (resources.displayMetrics.heightPixels * 0.55f).toInt()
         }
 
         knob.style = k.knob
@@ -929,7 +946,7 @@ class MainActivity : ScaledActivity() {
         if (daily != null && times != null) {
             val parse = SimpleDateFormat("yyyy-MM-dd", Locale.US)
             val wd = SimpleDateFormat("EEE", Locale.GERMANY)
-            for (i in 0 until minOf(times.length(), 3)) {
+            for (i in 0 until minOf(times.length(), prefs.getInt("wxDays", 3))) {
                 val label = when (i) {
                     0 -> "Heute"
                     1 -> "Morgen"
@@ -949,7 +966,7 @@ class MainActivity : ScaledActivity() {
             }
         }
         if (meta != null) {
-            val md = Meta.days(meta, 3)
+            val md = Meta.days(meta, days.size)
             for (i in days.indices) {
                 val m = md.getOrNull(i) ?: continue
                 val o = days[i]
@@ -1341,7 +1358,7 @@ class MainActivity : ScaledActivity() {
     private fun panelWidthPx(): Int {
         val dm = resources.displayMetrics
         val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val w = if (land) (dm.widthPixels - dp(24)) / 2.3f - dp(8) else dm.widthPixels - dp(24)
+        val w = if (land) (dm.widthPixels - dp(58)) / 2.3f - dp(8) else dm.widthPixels - dp(58)
         return (w - radioPanel.paddingLeft - radioPanel.paddingRight).toInt()
     }
 

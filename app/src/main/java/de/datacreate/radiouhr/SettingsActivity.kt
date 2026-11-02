@@ -328,7 +328,11 @@ class SettingsActivity : ScaledActivity() {
         check(c, "Gefühlte Temperatur", "wxFeels", false)
         check(c, "Wind", "wxWind", false)
         check(c, "Luftfeuchte", "wxHum", false)
-        check(c, "Vorhersage (3 Tage)", "wxForecast", true)
+        check(c, "Vorhersage", "wxForecast", true)
+        val dayOpts = (1..7).toList()
+        spinner(c, "Tage in der Vorhersage", dayOpts.map { if (it == 1) "nur heute" else "$it Tage" }, maxOf(0, dayOpts.indexOf(prefs.getInt("wxDays", 3)))) {
+            prefs.edit().putInt("wxDays", dayOpts[it]).apply()
+        }
         check(c, "Sonnenstunden in der Vorhersage", "wxSun", true)
         check(c, "Regenmenge in der Vorhersage", "wxRain", true)
         c.addView(small("Antippen von Wetter oder Temperatur öffnet die ausführliche Wetterseite."))
