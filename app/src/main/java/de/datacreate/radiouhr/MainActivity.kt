@@ -483,12 +483,49 @@ class MainActivity : ScaledActivity() {
             availH = dm.heightPixels * (if (night) 0.85f else 0.55f)
         }
         tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, ts)
+        arrangeControls(cfg.orientation == Configuration.ORIENTATION_LANDSCAPE)
         val ch = when (skin.clock) {
             ClockStyle.CUCKOO -> availH
             ClockStyle.ANALOG_BRAUN, ClockStyle.ANALOG_WOOD, ClockStyle.STATION -> minOf(ts * 2.1f, availH)
             else -> minOf(ts * 1.3f, availH)
         }
         clockView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ch.toInt())
+    }
+
+    /** Querformat: Timer und ＋ neben den Lautstärke-Schieber, Hochformat: unter die Sender. */
+    private fun arrangeControls(land: Boolean) {
+        val row = findViewById<LinearLayout>(R.id.controlRow)
+        val side = findViewById<LinearLayout>(R.id.sideCol)
+        for (v in listOf<View>(btnTimer, btnAdd)) {
+            (v.parent as? ViewGroup)?.removeView(v)
+        }
+        val size = dp(50).toInt()
+        if (land) {
+            side.orientation = LinearLayout.HORIZONTAL
+            side.gravity = Gravity.CENTER_VERTICAL
+            val btns = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                tag = "btns"
+            }
+            side.findViewWithTag<View>("btns")?.let { side.removeView(it) }
+            btns.addView(btnTimer, LinearLayout.LayoutParams(size, size).apply { setMargins(0, dp(4).toInt(), 0, dp(4).toInt()) })
+            btns.addView(btnAdd, LinearLayout.LayoutParams(size, size).apply { setMargins(0, dp(4).toInt(), 0, dp(4).toInt()) })
+            side.addView(btns, 0, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+                rightMargin = dp(4).toInt()
+            })
+            volSlider.layoutParams = LinearLayout.LayoutParams(dp(40).toInt(), ViewGroup.LayoutParams.MATCH_PARENT)
+            row.visibility = View.GONE
+        } else {
+            side.findViewWithTag<View>("btns")?.let { side.removeView(it) }
+            side.orientation = LinearLayout.VERTICAL
+            side.gravity = Gravity.CENTER_HORIZONTAL
+            volSlider.layoutParams = LinearLayout.LayoutParams(dp(40).toInt(), 0, 1f)
+            val m = dp(4).toInt()
+            row.addView(btnTimer, 1, LinearLayout.LayoutParams(size, size).apply { setMargins(m, m, m, m) })
+            row.addView(btnAdd, 2, LinearLayout.LayoutParams(size, size).apply { setMargins(m, m, m, m) })
+            row.visibility = View.VISIBLE
+        }
     }
 
     private fun dp(v: Int): Float = v * resources.displayMetrics.density
@@ -715,9 +752,7 @@ class MainActivity : ScaledActivity() {
         volSlider.fillColor = k.accent
         volSlider.iconColor = k.fg
         volSlider.trackColor = Color.argb(60, Color.red(k.fg), Color.green(k.fg), Color.blue(k.fg))
-        volSlider.layoutParams = (volSlider.layoutParams as android.widget.FrameLayout.LayoutParams).apply {
-            height = (resources.displayMetrics.heightPixels * 0.55f).toInt()
-        }
+
 
         knob.style = k.knob
         knob.accent = k.accent
@@ -1358,7 +1393,8 @@ class MainActivity : ScaledActivity() {
     private fun panelWidthPx(): Int {
         val dm = resources.displayMetrics
         val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val w = if (land) (dm.widthPixels - dp(58)) / 2.3f - dp(8) else dm.widthPixels - dp(58)
+        val side = if (land) dp(112) else dp(52)
+        val w = (if (land) (dm.widthPixels - dp(24)) / 2.3f - dp(8) else dm.widthPixels - dp(24)) - side
         return (w - radioPanel.paddingLeft - radioPanel.paddingRight).toInt()
     }
 
