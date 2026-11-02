@@ -500,8 +500,11 @@ class MainActivity : ScaledActivity() {
         for (v in listOf<View>(btnTimer, btnAdd)) (v.parent as? ViewGroup)?.removeView(v)
         side.orientation = LinearLayout.VERTICAL
         side.gravity = Gravity.CENTER_HORIZONTAL
-        val size = dp(46).toInt()
+        val size = dp(40).toInt()
         val m = dp(3).toInt()
+        val pad = dp(9).toInt()
+        timerIcon.setPadding(pad, pad, pad, pad)
+        btnAdd.setPadding(pad, pad, pad, pad)
         side.addView(btnTimer, 0, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
         side.addView(btnAdd, 1, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
         volSlider.layoutParams = LinearLayout.LayoutParams(dp(40).toInt(), 0, 1f).apply { topMargin = m }
@@ -723,7 +726,7 @@ class MainActivity : ScaledActivity() {
         (btnNight as ImageView).setColorFilter(tint)
         btnSettings.setColorFilter(tint)
         val ip = if (k.btn == BtnStyle.IVORY) dp(2).toInt() else 0
-        for (v in listOf<View>(btnPlay, btnNight, btnSettings, btnAdd, timerIcon)) {
+        for (v in listOf<View>(btnPlay, btnNight, btnSettings)) {
             v.setPadding(dp(14).toInt(), dp(14).toInt() - ip, dp(14).toInt(), dp(14).toInt() + ip)
         }
         btnNight.visibility = View.GONE
