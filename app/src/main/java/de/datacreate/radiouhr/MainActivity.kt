@@ -595,6 +595,8 @@ class MainActivity : ScaledActivity() {
         side.addView(btnTimer, 0, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
         side.addView(btnAdd, 1, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
         volSlider.layoutParams = LinearLayout.LayoutParams(dp(40).toInt(), 0, 1f).apply { topMargin = m }
+        // genug Höhe für Tasten + Schieber
+        radioPanel.minimumHeight = if (land) 0 else dp(210).toInt()
         row.visibility = View.GONE
         // Querformat: Zahnrad oben in dieser Spalte (überdeckt dann nichts), Hochformat: oben rechts in der Ecke
         (btnGear.parent as? ViewGroup)?.removeView(btnGear)

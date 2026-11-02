@@ -42,7 +42,7 @@ class VolumeSlider @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         val cx = w / 2f
         val top = barTop()
         val bottom = barBottom()
-        if (bottom <= top) return
+        if (bottom - top < 4 * d) return
         r.set(cx - bw / 2, top, cx + bw / 2, bottom)
         p.style = Paint.Style.FILL
         p.color = trackColor
@@ -54,7 +54,9 @@ class VolumeSlider @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
         }
         // Griff
         p.color = iconColor
-        c.drawCircle(cx, fy.coerceIn(top + bw / 2, bottom - bw / 2), bw * 0.85f, p)
+        val lo = top + bw / 2
+        val hi = bottom - bw / 2
+        c.drawCircle(cx, if (hi > lo) fy.coerceIn(lo, hi) else (top + bottom) / 2f, bw * 0.85f, p)
         // Prozent beim Schieben
         if (dragging) {
             p.textAlign = Paint.Align.CENTER
@@ -101,6 +103,7 @@ class VolumeSlider @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? 
     }
 
     private fun update(e: MotionEvent) {
+        if (barBottom() - barTop() < 4 * d) return
         val nv = ((barBottom() - e.y) / (barBottom() - barTop())).coerceIn(0f, 1f)
         if (nv != value) {
             value = nv
