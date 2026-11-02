@@ -33,16 +33,19 @@
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
+            android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:theme="@android:style/Theme.Material.NoActionBar" />
         <activity
             android:name=".WeatherActivity"
             android:exported="false"
+            android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:theme="@android:style/Theme.Material.NoActionBar" />
         <activity
             android:name=".NetatmoAuthActivity"
             android:exported="false"
+            android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:windowSoftInputMode="adjustResize"
             android:theme="@android:style/Theme.Material.NoActionBar" />

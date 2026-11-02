@@ -489,7 +489,51 @@ class MainActivity : ScaledActivity() {
             ClockStyle.ANALOG_BRAUN, ClockStyle.ANALOG_WOOD, ClockStyle.STATION -> minOf(ts * 2.1f, availH)
             else -> minOf(ts * 1.3f, availH)
         }
-        clockView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ch.toInt())
+        baseTs = ts
+        baseCh = ch.toInt()
+        refitClock()
+    }
+
+    private var fitPending = 0
+    private var baseTs = 0f
+    private var baseCh = 0
+
+    /** Uhr auf Grundgröße setzen und bei Platzmangel verkleinern. */
+    private fun refitClock() {
+        if (baseTs <= 0f) return
+        tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, baseTs)
+        clockView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, baseCh)
+        fitPending = 0
+        clockPanel.removeCallbacks(fitClock)
+        clockPanel.post(fitClock)
+    }
+
+    /** Passt die Uhr nicht mehr hin (Wetter, Termine …), wird sie verkleinert. */
+    private val fitClock = object : Runnable {
+        override fun run() {
+            if (clockPanel.height <= 0 || fitPending > 4) return
+            var used = 0
+            for (i in 0 until clockPanel.childCount) {
+                val c = clockPanel.getChildAt(i)
+                if (c.visibility == View.GONE) continue
+                val lp = c.layoutParams as? LinearLayout.LayoutParams
+                used += c.measuredHeight + (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
+            }
+            val avail = clockPanel.height - clockPanel.paddingTop - clockPanel.paddingBottom
+            val over = used - avail
+            if (over <= dp(2)) return
+            fitPending++
+            if (tvTime.visibility == View.VISIBLE) {
+                val h = tvTime.measuredHeight.coerceAtLeast(1)
+                val f = ((h - over).toFloat() / h).coerceIn(0.3f, 1f)
+                tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, tvTime.textSize * f)
+            } else {
+                val lp = clockView.layoutParams
+                lp.height = (clockView.measuredHeight - over).coerceAtLeast(dp(60).toInt())
+                clockView.layoutParams = lp
+            }
+            clockPanel.post(this)
+        }
     }
 
     /** Timer und ＋ in derselben Spalte wie der Lautstärke-Schieber (oben die Tasten, darunter der Schieber). */
@@ -509,6 +553,17 @@ class MainActivity : ScaledActivity() {
         side.addView(btnAdd, 1, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
         volSlider.layoutParams = LinearLayout.LayoutParams(dp(40).toInt(), 0, 1f).apply { topMargin = m }
         row.visibility = View.GONE
+        // Querformat: Zahnrad oben in dieser Spalte (überdeckt dann nichts), Hochformat: oben rechts in der Ecke
+        (btnGear.parent as? ViewGroup)?.removeView(btnGear)
+        if (land) {
+            btnGear.setPadding(dp(8).toInt(), dp(8).toInt(), dp(8).toInt(), dp(8).toInt())
+            side.addView(btnGear, 0, LinearLayout.LayoutParams(size, size).apply { setMargins(0, 0, 0, m * 2) })
+        } else {
+            btnGear.setPadding(dp(11).toInt(), dp(11).toInt(), dp(11).toInt(), dp(11).toInt())
+            val frame = findViewById<android.widget.FrameLayout>(R.id.frame)
+            frame.addView(btnGear, android.widget.FrameLayout.LayoutParams(dp(44).toInt(), dp(44).toInt(),
+                Gravity.TOP or Gravity.END).apply { setMargins(m, m, m, m) })
+        }
     }
 
     private fun dp(v: Int): Float = v * resources.displayMetrics.density
@@ -707,8 +762,8 @@ class MainActivity : ScaledActivity() {
         }
         btnGear.alpha = 0.8f
         tvNowPlaying.visibility = vis(k.details)
-        favScroll.visibility = View.GONE
-        favGrid.visibility = vis(k.presets != Presets.NONE)
+        favScroll.visibility = vis(k.presets == Presets.ROW || k.presets == Presets.KEYS)
+        findViewById<View>(R.id.favGridScroll).visibility = vis(k.presets == Presets.GRID)
         btnTimer.visibility = vis(k.extraButtons)
         btnNight.visibility = View.GONE
         if (on || !k.events) tvEvents.visibility = View.GONE else loadEvents()
@@ -999,6 +1054,7 @@ class MainActivity : ScaledActivity() {
             }
         }
         showForecast(days)
+        refitClock()
     }
 
     private fun mm(v: Double): String = Wx.mm(v)
@@ -1071,6 +1127,7 @@ class MainActivity : ScaledActivity() {
                 } else {
                     tvEvents.text = if (lines.isEmpty()) "Heute keine Termine mehr" else lines.joinToString("\n")
                     tvEvents.visibility = View.VISIBLE
+                    refitClock()
                 }
             }
         }
@@ -1330,7 +1387,7 @@ class MainActivity : ScaledActivity() {
             setTextColor(if (active) skin.accent else col("#9AA3AD"))
             gravity = Gravity.CENTER
         })
-        val size = dp(58).toInt()
+        val size = dp(44).toInt()
         key.addView(logoView(s, size), LinearLayout.LayoutParams(size, size))
         key.addView(TextView(this).apply {
             text = s.name
@@ -1382,6 +1439,13 @@ class MainActivity : ScaledActivity() {
     }
 
     /** Senderkacheln mehrzeilig anordnen. */
+    private fun scrollToActive(active: Int) {
+        favScroll.post {
+            val child = favRow.getChildAt(active) ?: return@post
+            favScroll.smoothScrollTo(maxOf(0, child.left - (favScroll.width - child.width) / 2), 0)
+        }
+    }
+
     private fun fillGrid(views: List<View>, cols: Int, itemH: Int) {
         val cellW = panelWidthPx() / cols
         var row: LinearLayout? = null
@@ -1409,30 +1473,45 @@ class MainActivity : ScaledActivity() {
         when (skin.presets) {
             Presets.NONE -> return
             Presets.ROW -> {
-                val size = dp(72).toInt()
-                val views = mutableListOf<View>()
-                stations.forEachIndexed { i, s -> views.add(favItem(i, s, size, 13f, active)) }
-                fillGrid(views, maxOf(1, panelWidthPx() / dp(92).toInt()), dp(122).toInt())
+                // eine Reihe kleiner, gleich großer Kacheln – bei vielen Sendern seitlich wischen
+                val size = dp(50).toInt()
+                val w = dp(68).toInt()
+                stations.forEachIndexed { i, s ->
+                    favRow.addView(favItem(i, s, size, 11f, active), LinearLayout.LayoutParams(w, dp(88).toInt()))
+                }
+                scrollToActive(active)
                 return
             }
             Presets.KEYS -> {
-                val views = mutableListOf<View>()
                 stations.forEachIndexed { i, s ->
                     val key = ivoryKey(s.name, i == active && wantPlaying)
+                    key.textSize = 12f
                     key.setOnClickListener { stationClick(i) }
                     key.setOnLongClickListener {
                         confirmRemove(i)
                         true
                     }
-                    views.add(key)
+                    favRow.addView(key, LinearLayout.LayoutParams(dp(74).toInt(), dp(60).toInt()).apply {
+                        setMargins(dp(2).toInt(), 0, dp(2).toInt(), 0)
+                    })
                 }
-                fillGrid(views, maxOf(1, panelWidthPx() / dp(88).toInt()), dp(74).toInt())
+                scrollToActive(active)
                 return
             }
             Presets.GRID -> {
                 val views = mutableListOf<View>()
                 stations.forEachIndexed { i, s -> views.add(keypadKey(i, s, i == active && wantPlaying)) }
-                fillGrid(views, 4, dp(128).toInt())
+                val rowH = dp(104).toInt()
+                fillGrid(views, 4, rowH)
+                // höchstens zwei Reihen sichtbar, der Rest wird gescrollt
+                val gs = findViewById<View>(R.id.favGridScroll)
+                val rows = (views.size + 3) / 4
+                val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                gs.layoutParams = (gs.layoutParams as LinearLayout.LayoutParams).apply {
+                    height = if (land) 0 else ViewGroup.LayoutParams.WRAP_CONTENT
+                    weight = if (land) 1f else 0f
+                    if (!land && rows > 2) height = 2 * (rowH + dp(6).toInt())
+                }
                 return
             }
         }

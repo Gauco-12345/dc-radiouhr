@@ -135,9 +135,54 @@ class WeatherActivity : ScaledActivity() {
 
     // ------------------------------------------------------------ Aufbau
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        render()
+    }
+
+    private lateinit var outer: LinearLayout
+
     private fun render() {
         val y = scroll.scrollY
-        list.removeAllViews()
+        if (!::outer.isInitialized) outer = list
+        outer.removeAllViews()
+        val land = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        list = outer
+        var right: LinearLayout? = null
+        if (land) {
+            val head = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            cols.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(10) })
+            cols.addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
+            outer.addView(head)
+            outer.addView(cols)
+            list = head
+            renderHead()
+            list = left
+        } else {
+            renderHead()
+        }
+        netatmoSection()
+        val wx = try { prefs.getString("wxJson", null)?.let { JSONObject(it) } } catch (_: Exception) { null }
+        if (wx == null) {
+            list.addView(t("\nWetterdaten werden geladen …", 15f, sub))
+            return
+        }
+        currentSection(wx)
+        todaySection(wx)
+        if (right != null) list = right
+        hourlySection(wx)
+        dailySection(wx)
+        list = outer
+        val mb = if (useMeta()) Meta.cached(prefs) else null
+        list.addView(t("\nQuelle: " + (if (mb != null) "Konsens aus ${mb.sources.size} Wetterdiensten · " else "") +
+            "Open-Meteo.com" + if (Netatmo.connected(prefs)) " · Netatmo" else "", 11f, sub))
+        scroll.post { scroll.scrollTo(0, y) }
+    }
+
+    private fun renderHead() {
         val head = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -152,21 +197,6 @@ class WeatherActivity : ScaledActivity() {
         val wt = prefs.getLong("wxTime", 0L)
         if (wt > 0) list.addView(t("Stand " + SimpleDateFormat("HH:mm", Locale.GERMANY).format(Date(wt)), 12f, sub))
 
-        netatmoSection()
-
-        val wx = try { prefs.getString("wxJson", null)?.let { JSONObject(it) } } catch (_: Exception) { null }
-        if (wx == null) {
-            list.addView(t("\nWetterdaten werden geladen …", 15f, sub))
-            return
-        }
-        currentSection(wx)
-        todaySection(wx)
-        hourlySection(wx)
-        dailySection(wx)
-        val mb = if (useMeta()) Meta.cached(prefs) else null
-        list.addView(t("\nQuelle: " + (if (mb != null) "DC Wetter-Meta (Konsens aus ${mb.sources.size} Diensten) · " else "") +
-            "Open-Meteo.com" + if (Netatmo.connected(prefs)) " · Netatmo" else "", 11f, sub))
-        scroll.post { scroll.scrollTo(0, y) }
     }
 
     private fun netatmoSection() {
