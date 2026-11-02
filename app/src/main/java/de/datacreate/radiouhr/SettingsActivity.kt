@@ -42,17 +42,96 @@ class SettingsActivity : ScaledActivity() {
     private val accent = col("#FF8A3D")
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    private var tab = 0
+    private lateinit var tabBox: LinearLayout
+    private lateinit var scroll: ScrollView
+    private val TABS = listOf("Darstellung", "Wetter", "Netatmo", "Wecker", "Nacht", "Radio & Termine", "Sichern")
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Wx.prefs(this)
-        val scroll = ScrollView(this)
-        scroll.setBackgroundColor(col("#121212"))
+        tab = savedInstanceState?.getInt("tab", 0) ?: intent.getIntExtra("tab", 0)
+        setupFrame()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("tab", tab)
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        setupFrame()
+        build()
+    }
+
+    /** Hochformat: Reiter oben. Querformat: Reiter links, Inhalt rechts. */
+    private fun setupFrame() {
+        val land = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val root = LinearLayout(this).apply {
+            orientation = if (land) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            setBackgroundColor(col("#121212"))
+        }
+        tabBox = LinearLayout(this).apply {
+            orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            setPadding(dp(10), dp(10), dp(10), dp(6))
+        }
+        if (land) {
+            val sv = ScrollView(this)
+            sv.setBackgroundColor(col("#181818"))
+            sv.addView(tabBox)
+            root.addView(sv, LinearLayout.LayoutParams(dp(210), ViewGroup.LayoutParams.MATCH_PARENT))
+        } else {
+            val hs = android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+            hs.setBackgroundColor(col("#181818"))
+            hs.addView(tabBox)
+            root.addView(hs, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        scroll = ScrollView(this)
         list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(12), dp(18), dp(40))
         }
         scroll.addView(list)
-        setContentView(scroll)
+        root.addView(scroll, if (land) LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+        else LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        setContentView(root)
+    }
+
+    private fun buildTabs() {
+        val land = tabBox.orientation == LinearLayout.VERTICAL
+        tabBox.removeAllViews()
+        if (land) {
+            tabBox.addView(TextView(this).apply {
+                text = "‹  Einstellungen"
+                textSize = 19f
+                setTextColor(Color.WHITE)
+                setPadding(dp(6), dp(6), 0, dp(14))
+                setOnClickListener { finish() }
+            })
+        }
+        TABS.forEachIndexed { i, name ->
+            val sel = i == tab
+            tabBox.addView(TextView(this).apply {
+                text = name
+                textSize = 15f
+                setTextColor(if (sel) Color.BLACK else col("#DDDDDD"))
+                if (sel) setTypeface(typeface, Typeface.BOLD)
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(20).toFloat()
+                    setColor(if (sel) accent else col("#262626"))
+                }
+                setOnClickListener {
+                    tab = i
+                    build()
+                    scroll.scrollTo(0, 0)
+                }
+            }, LinearLayout.LayoutParams(
+                if (land) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+        }
     }
 
     override fun onResume() {
@@ -186,12 +265,15 @@ class SettingsActivity : ScaledActivity() {
     // ------------------------------------------------------------ Aufbau
 
     private fun build() {
+        buildTabs()
         list.removeAllViews()
-        title("Einstellungen")
+        if (tabBox.orientation == LinearLayout.HORIZONTAL) title("Einstellungen")
+        var c: LinearLayout
 
         // Darstellung
+        if (tab == 0) {
         section("Darstellung")
-        var c = card()
+        c = card()
         val skins = Skins.all
         spinner(c, "Design", skins.map { it.name }, skins.indexOfFirst { it.id == prefs.getString("skin", "standard") }) {
             prefs.edit().putString("skin", skins[it].id).apply()
@@ -221,6 +303,8 @@ class SettingsActivity : ScaledActivity() {
         }
         c.addView(small("„automatisch“ passt alles an die Bildschirmgröße an (Handy, 8-Zoll-Tablet …). Mit % feiner einstellen."))
 
+        }
+        if (tab == 1) {
         // Wetter
         section("Wetter")
         c = card()
@@ -249,6 +333,8 @@ class SettingsActivity : ScaledActivity() {
         check(c, "Regenmenge in der Vorhersage", "wxRain", true)
         c.addView(small("Antippen von Wetter oder Temperatur öffnet die ausführliche Wetterseite."))
 
+        }
+        if (tab == 2) {
         // Netatmo
         section("Netatmo-Wetterstation")
         c = card()
@@ -287,6 +373,8 @@ class SettingsActivity : ScaledActivity() {
             }
         }
 
+        }
+        if (tab == 5) {
         // Termine
         section("Termine")
         c = card()
@@ -296,10 +384,45 @@ class SettingsActivity : ScaledActivity() {
             prefs.edit().putInt("evMax", counts[it]).apply()
         }
 
+        }
+        if (tab == 4) {
         // Nacht
         section("Nachtmodus")
         c = card()
-        check(c, "Automatisch einschalten", "autoNight", true, "Nachts nur die Uhr, gedimmt in Rot. Mehrere Zeiträume möglich, z. B. auch Mittagsschlaf.")
+        check(c, "Automatisch einschalten", "autoNight", true, "Nachts nur die Uhr, gedimmt. Mehrere Zeiträume möglich, z. B. auch Mittagsschlaf.")
+        c = card()
+        (c.layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(10)
+        val brightLabel = TextView(this).apply {
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setPadding(dp(4), dp(8), 0, 0)
+        }
+        fun bl(v: Int) { brightLabel.text = "Helligkeit der Nachtuhr: $v %" }
+        bl(prefs.getInt("nightBright", 5))
+        c.addView(brightLabel)
+        c.addView(android.widget.SeekBar(this).apply {
+            max = 99
+            progress = prefs.getInt("nightBright", 5) - 1
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar?, v: Int, fromUser: Boolean) {
+                    bl(v + 1)
+                    if (fromUser) {
+                        prefs.edit().putInt("nightBright", v + 1).apply()
+                        previewBrightness(v + 1)
+                    }
+                }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {
+                    previewBrightness(-1)
+                }
+            })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        c.addView(small("Beim Schieben zeigt das Display die Helligkeit kurz zur Probe."))
+        val ncol = listOf("#B8432F" to "Rot", "#C8782A" to "Bernstein", "#3FA34D" to "Grün", "#3D72C4" to "Blau", "#BBBBBB" to "Weiß")
+        spinner(c, "Farbe", ncol.map { it.second }, maxOf(0, ncol.indexOfFirst { it.first == prefs.getString("nightColor", "#B8432F") })) {
+            prefs.edit().putString("nightColor", ncol[it].first).apply()
+        }
+        c = card()
         val zones = NightZones.load(prefs)
         zones.forEachIndexed { i, z ->
             timeRow(c, "${hhmm(z.from)} – ${hhmm(z.to)}", Days.label(z.days),
@@ -314,6 +437,8 @@ class SettingsActivity : ScaledActivity() {
             build()
         }
 
+        }
+        if (tab == 3) {
         // Wecker
         section("Radiowecker")
         c = card()
@@ -355,12 +480,16 @@ class SettingsActivity : ScaledActivity() {
             c.addView(small("Klappt der Sender beim Wecken nicht, ertönt nach 30 Sekunden der normale Weckton."))
         }
 
+        }
+        if (tab == 5) {
         // Radio
         section("Radio")
         c = card()
         check(c, "Beim Start automatisch abspielen", "autoplay", false)
         c.addView(small("Sender hinzufügen: ＋ auf der Startseite. Entfernen: Sender lange drücken."))
 
+        }
+        if (tab == 6) {
         // Sichern
         section("Sichern & Übertragen")
         c = card()
@@ -370,6 +499,7 @@ class SettingsActivity : ScaledActivity() {
         button(c, "Daten importieren …", "ersetzt alle Einstellungen dieses Geräts") { importData() }
         c.addView(small("Die Datei enthält den Netatmo-Zugang – nicht öffentlich weitergeben."))
 
+        }
         list.addView(small("\nDC Radiouhr · Datacreate"))
     }
 
@@ -437,9 +567,36 @@ class SettingsActivity : ScaledActivity() {
         parent.addView(box)
     }
 
+    /** Kompakter Zeitwähler (Stunde : Minute) – passt auch quer und auf kleine Displays. */
     private fun pickTime(min: Int, onSet: (Int) -> Unit) {
-        android.app.TimePickerDialog(this, android.R.style.Theme_Material_Dialog_Alert, { _, h, m -> onSet(h * 60 + m) },
-            min / 60, min % 60, true).show()
+        fun np(maxV: Int, value: Int) = android.widget.NumberPicker(this).apply {
+            minValue = 0
+            maxValue = maxV
+            displayedValues = Array(maxV + 1) { String.format("%02d", it) }
+            this.value = value
+            wrapSelectorWheel = true
+            descendantFocusability = android.widget.NumberPicker.FOCUS_BLOCK_DESCENDANTS
+        }
+        val h = np(23, min / 60)
+        val m = np(59, min % 60)
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(8), dp(16), 0)
+        }
+        row.addView(h)
+        row.addView(TextView(this).apply {
+            text = " : "
+            textSize = 28f
+            setTextColor(Color.WHITE)
+        })
+        row.addView(m)
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle("Uhrzeit")
+            .setView(row)
+            .setPositiveButton("OK") { _, _ -> onSet(h.value * 60 + m.value) }
+            .setNegativeButton("Abbrechen", null)
+            .show()
     }
 
     private fun pickDays(mask: Int, allowNone: Boolean = false, onSet: (Int) -> Unit) {
@@ -457,6 +614,12 @@ class SettingsActivity : ScaledActivity() {
             .setNeutralButton("Mo–Fr") { _, _ -> onSet(0x1F) }
             .setNegativeButton("Abbrechen", null)
             .show()
+    }
+
+    private fun previewBrightness(pct: Int) {
+        val lp = window.attributes
+        lp.screenBrightness = if (pct < 0) android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else (pct / 100f).coerceAtLeast(0.01f)
+        window.attributes = lp
     }
 
     // ------------------------------------------------------------ Export / Import

@@ -230,6 +230,7 @@ class MainActivity : ScaledActivity() {
         Alarms.schedule(this)
         lastAutoNight = null
         applyLook()
+        if (night) setNight(true)
         checkAutoNight(Calendar.getInstance().get(Calendar.HOUR_OF_DAY))
         showWeather(prefs.getString("wxPlaceName", placeName()) ?: placeName())
         main.removeCallbacks(tick)
@@ -562,11 +563,20 @@ class MainActivity : ScaledActivity() {
         night = on
         applyLook()
         val lp = window.attributes
-        lp.screenBrightness = if (on) 0.01f else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        lp.screenBrightness = if (on) nightLevel().coerceAtLeast(0.01f) else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         window.attributes = lp
         // nachts kurz angetippt: nach 1 Minute wieder nur Uhr
         main.removeCallbacks(backToNight)
         if (!on && prefs.getBoolean("autoNight", true) && isNightHour()) main.postDelayed(backToNight, 60_000L)
+    }
+
+    /** Nachtuhr: Helligkeit 0..1 und Farbe aus den Einstellungen. */
+    private fun nightLevel(): Float = prefs.getInt("nightBright", 5) / 100f
+
+    private fun nightColor(): Int {
+        val base = try { Color.parseColor(prefs.getString("nightColor", "#B8432F")) } catch (_: Exception) { Color.parseColor("#B8432F") }
+        val f = 0.55f + 0.45f * nightLevel()
+        return Color.rgb((Color.red(base) * f).toInt(), (Color.green(base) * f).toInt(), (Color.blue(base) * f).toInt())
     }
 
     private fun vis(show: Boolean) = if (show) View.VISIBLE else View.GONE
@@ -603,9 +613,9 @@ class MainActivity : ScaledActivity() {
         tvTime.visibility = vis(!drawn)
         clockView.visibility = vis(drawn)
         clockView.style = k.clock
-        clockView.litColor = if (on) Color.parseColor("#B8432F") else k.fg
-        clockView.alpha = if (on && (k.clock == ClockStyle.ANALOG_BRAUN || k.clock == ClockStyle.FLIP || k.clock == ClockStyle.CUCKOO || k.clock == ClockStyle.STATION)) 0.35f
-        else if (on) 0.6f else 1f
+        clockView.litColor = if (on) nightColor() else k.fg
+        clockView.alpha = if (on && (k.clock == ClockStyle.ANALOG_BRAUN || k.clock == ClockStyle.FLIP || k.clock == ClockStyle.CUCKOO || k.clock == ClockStyle.STATION)) (0.2f + 0.6f * nightLevel()).coerceAtMost(1f)
+        else if (on) (0.45f + 0.55f * nightLevel()).coerceAtMost(1f) else 1f
         tvTime.typeface = Typeface.create(k.clockFamily, k.clockStyle)
         if (k.textGlow && !on) tvTime.setShadowLayer(dp(14), 0f, 0f, k.accent) else tvTime.setShadowLayer(0f, 0f, 0f, 0)
 
@@ -614,7 +624,7 @@ class MainActivity : ScaledActivity() {
         tvDate.typeface = tf
         tvWeatherInfo.typeface = tf
         tvEvents.typeface = tf
-        tvTime.setTextColor(if (on) Color.parseColor("#B8432F") else k.fg)
+        tvTime.setTextColor(if (on) nightColor() else k.fg)
         tvTemp.setTextColor(k.fg)
         tvDate.setTextColor(k.sub)
         tvWeatherInfo.setTextColor(k.sub)
@@ -662,7 +672,12 @@ class MainActivity : ScaledActivity() {
         wxDivider.visibility = vis(!on && fc)
         wxDivider.setBackgroundColor(Color.argb(70, Color.red(k.sub), Color.green(k.sub), Color.blue(k.sub)))
         btnGear.visibility = vis(!on)
-        btnGear.setImageDrawable(GearDrawable(if (k.btn == BtnStyle.ROUND) col("#2A2A2A") else k.iconTint))
+        btnGear.setImageDrawable(GearDrawable(k.fg))
+        btnGear.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.argb(110, Color.red(k.bgTop), Color.green(k.bgTop), Color.blue(k.bgTop)))
+        }
+        btnGear.alpha = 0.8f
         tvNowPlaying.visibility = vis(k.details)
         favScroll.visibility = View.GONE
         favGrid.visibility = vis(k.presets != Presets.NONE)
