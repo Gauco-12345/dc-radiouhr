@@ -226,6 +226,7 @@ class MainActivity : ScaledActivity() {
         Alarms.schedule(this)
         updateNextAlarm()
         if (intent?.action == Alarms.ACTION) main.post { fireAlarm() }
+        main.postDelayed({ showLastCrash() }, 800)
     }
 
     override fun onResume() {
@@ -251,6 +252,32 @@ class MainActivity : ScaledActivity() {
         main.removeCallbacks(tick)
         main.removeCallbacks(weatherLoop)
         // Radio läuft bewusst weiter
+    }
+
+    private fun showLastCrash() {
+        val txt = prefs.getString("lastCrash", null) ?: return
+        val tv = TextView(this).apply {
+            text = txt
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.MONOSPACE
+            setTextIsSelectable(true)
+            val p = dp(16).toInt()
+            setPadding(p, p, p, p)
+        }
+        val sv = android.widget.ScrollView(this)
+        sv.addView(tv)
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle("Die App ist zuletzt abgestürzt")
+            .setView(sv)
+            .setPositiveButton("Kopieren") { _, _ ->
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("Absturz", txt))
+                Toast.makeText(this, "Kopiert – bitte an Claude schicken", Toast.LENGTH_LONG).show()
+                prefs.edit().remove("lastCrash").apply()
+            }
+            .setNegativeButton("Löschen") { _, _ -> prefs.edit().remove("lastCrash").apply() }
+            .show()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -511,6 +538,14 @@ class MainActivity : ScaledActivity() {
     /** Passt die Uhr nicht mehr hin (Wetter, Termine …), wird sie verkleinert. */
     private val fitClock = object : Runnable {
         override fun run() {
+            try {
+                fit()
+            } catch (e: Exception) {
+                android.util.Log.e("Radiouhr", "fitClock", e)
+            }
+        }
+
+        private fun fit() {
             if (clockPanel.height <= 0 || fitPending > 4) return
             var used = 0
             for (i in 0 until clockPanel.childCount) {
@@ -532,13 +567,21 @@ class MainActivity : ScaledActivity() {
                 lp.height = (clockView.measuredHeight - over).coerceAtLeast(dp(60).toInt())
                 clockView.layoutParams = lp
             }
-            clockPanel.post(this)
+            clockPanel.post(this@MainActivity.fitClock)
         }
     }
 
     /** Timer und ＋ in derselben Spalte wie der Lautstärke-Schieber (oben die Tasten, darunter der Schieber). */
     @Suppress("UNUSED_PARAMETER")
     private fun arrangeControls(land: Boolean) {
+        try {
+            arrangeControlsInner(land)
+        } catch (e: Exception) {
+            android.util.Log.e("Radiouhr", "arrangeControls", e)
+        }
+    }
+
+    private fun arrangeControlsInner(land: Boolean) {
         val row = findViewById<LinearLayout>(R.id.controlRow)
         val side = findViewById<LinearLayout>(R.id.sideCol)
         for (v in listOf<View>(btnTimer, btnAdd)) (v.parent as? ViewGroup)?.removeView(v)
@@ -1464,6 +1507,14 @@ class MainActivity : ScaledActivity() {
     }
 
     private fun buildFavorites() {
+        try {
+            buildFavoritesInner()
+        } catch (e: Exception) {
+            android.util.Log.e("Radiouhr", "buildFavorites", e)
+        }
+    }
+
+    private fun buildFavoritesInner() {
         if (!::favRow.isInitialized || !::skin.isInitialized) return
         favRow.removeAllViews()
         favGrid.removeAllViews()

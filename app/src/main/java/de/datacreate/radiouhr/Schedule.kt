@@ -17,6 +17,7 @@ import java.util.Calendar
 open class ScaledActivity : Activity() {
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(newBase)
+        CrashLog.install(newBase.applicationContext ?: newBase)
         try {
             val p = newBase.getSharedPreferences("radiouhr", Context.MODE_PRIVATE)
             val base = newBase.resources.configuration
@@ -29,6 +30,29 @@ open class ScaledActivity : Activity() {
             cfg.densityDpi = (newBase.resources.displayMetrics.densityDpi * f).toInt()
             applyOverrideConfiguration(cfg)
         } catch (_: Exception) {
+        }
+    }
+}
+
+/** Merkt sich Abstürze, damit die App sie beim nächsten Start anzeigen kann. */
+object CrashLog {
+    @Volatile private var installed = false
+
+    fun install(ctx: Context) {
+        if (installed) return
+        installed = true
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                val sw = java.io.StringWriter()
+                e.printStackTrace(java.io.PrintWriter(sw))
+                val ver = try { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName } catch (_: Exception) { "?" }
+                ctx.getSharedPreferences("radiouhr", Context.MODE_PRIVATE).edit()
+                    .putString("lastCrash", "Version $ver · Android ${Build.VERSION.RELEASE} · ${Build.MODEL}\n\n" + sw.toString().take(6000))
+                    .commit()
+            } catch (_: Throwable) {
+            }
+            prev?.uncaughtException(t, e)
         }
     }
 }
