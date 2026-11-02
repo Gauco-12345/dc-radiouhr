@@ -157,6 +157,7 @@ class MainActivity : ScaledActivity() {
         clockPanel = findViewById(R.id.clockPanel)
         radioPanel = findViewById(R.id.radioPanel)
         tvTime = findViewById(R.id.tvTime)
+        tvTime.ellipsize = null
         tvDate = findViewById(R.id.tvDate)
         tvWeatherIcon = findViewById(R.id.tvWeatherIcon)
         tvTemp = findViewById(R.id.tvTemp)
@@ -554,6 +555,17 @@ class MainActivity : ScaledActivity() {
                 val lp = c.layoutParams as? LinearLayout.LayoutParams
                 used += c.measuredHeight + (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
             }
+            // Breite: Ziffern-Uhr darf nicht abgeschnitten werden
+            if (tvTime.visibility == View.VISIBLE) {
+                val availW = clockPanel.width - clockPanel.paddingLeft - clockPanel.paddingRight - dp(8)
+                val need = tvTime.paint.measureText("88:88") + tvTime.paddingLeft + tvTime.paddingRight
+                if (availW > 0 && need > availW) {
+                    tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, tvTime.textSize * availW / need)
+                    fitPending++
+                    clockPanel.post(this)
+                    return
+                }
+            }
             val avail = clockPanel.height - clockPanel.paddingTop - clockPanel.paddingBottom
             val over = used - avail
             if (over <= dp(2)) return
@@ -595,6 +607,10 @@ class MainActivity : ScaledActivity() {
         side.addView(btnTimer, 0, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
         side.addView(btnAdd, 1, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
         volSlider.layoutParams = LinearLayout.LayoutParams(dp(40).toInt(), 0, 1f).apply { topMargin = m }
+        findViewById<View>(R.id.radioMain).layoutParams = LinearLayout.LayoutParams(0,
+            if (land) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            gravity = Gravity.CENTER_VERTICAL
+        }
         // genug Höhe für Tasten + Schieber
         radioPanel.minimumHeight = if (land) 0 else dp(210).toInt()
         row.visibility = View.GONE
@@ -807,8 +823,10 @@ class MainActivity : ScaledActivity() {
         }
         btnGear.alpha = 0.8f
         tvNowPlaying.visibility = vis(k.details)
-        favScroll.visibility = vis(k.presets == Presets.ROW || k.presets == Presets.KEYS)
-        findViewById<View>(R.id.favGridScroll).visibility = vis(k.presets == Presets.GRID)
+        if (k.presets == Presets.NONE) {
+            favScroll.visibility = View.GONE
+            findViewById<View>(R.id.favGridScroll).visibility = View.GONE
+        }
         btnTimer.visibility = vis(k.extraButtons)
         btnNight.visibility = View.GONE
         if (on || !k.events) tvEvents.visibility = View.GONE else loadEvents()
@@ -1484,6 +1502,20 @@ class MainActivity : ScaledActivity() {
     }
 
     /** Senderkacheln mehrzeilig anordnen. */
+    private fun isLand() = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    /** Raster (mehrere Reihen) oder eine wischbare Reihe zeigen. Im Querformat füllt das Raster die Resthöhe. */
+    private fun showGrid(grid: Boolean, portraitMaxH: Int = 0) {
+        val gs = findViewById<View>(R.id.favGridScroll)
+        favScroll.visibility = vis(!grid)
+        gs.visibility = vis(grid)
+        val land = isLand()
+        gs.layoutParams = (gs.layoutParams as LinearLayout.LayoutParams).apply {
+            height = if (land) 0 else if (portraitMaxH > 0) portraitMaxH else ViewGroup.LayoutParams.WRAP_CONTENT
+            weight = if (land) 1f else 0f
+        }
+    }
+
     private fun scrollToActive(active: Int) {
         favScroll.post {
             val child = favRow.getChildAt(active) ?: return@post
@@ -1525,6 +1557,27 @@ class MainActivity : ScaledActivity() {
 
         when (skin.presets) {
             Presets.NONE -> return
+            Presets.ROW, Presets.KEYS -> if (isLand()) {
+                // Querformat: mehrere Reihen, füllen den freien Platz, bei vielen Sendern nach oben wischen
+                val keys = skin.presets == Presets.KEYS
+                val views = mutableListOf<View>()
+                stations.forEachIndexed { i, s ->
+                    if (keys) {
+                        val key = ivoryKey(s.name, i == active && wantPlaying)
+                        key.textSize = 12f
+                        key.setOnClickListener { stationClick(i) }
+                        key.setOnLongClickListener {
+                            confirmRemove(i)
+                            true
+                        }
+                        views.add(key)
+                    } else views.add(favItem(i, s, dp(50).toInt(), 11f, active))
+                }
+                val cellW = if (keys) dp(86).toInt() else dp(74).toInt()
+                fillGrid(views, maxOf(1, panelWidthPx() / cellW), if (keys) dp(62).toInt() else dp(88).toInt())
+                showGrid(true)
+                return
+            } else when (skin.presets) {
             Presets.ROW -> {
                 // eine Reihe kleiner, gleich großer Kacheln – bei vielen Sendern seitlich wischen
                 val size = dp(50).toInt()
@@ -1533,6 +1586,7 @@ class MainActivity : ScaledActivity() {
                     favRow.addView(favItem(i, s, size, 11f, active), LinearLayout.LayoutParams(w, dp(88).toInt()))
                 }
                 scrollToActive(active)
+                showGrid(false)
                 return
             }
             Presets.KEYS -> {
@@ -1549,22 +1603,17 @@ class MainActivity : ScaledActivity() {
                     })
                 }
                 scrollToActive(active)
+                showGrid(false)
                 return
+            }
+            else -> {}
             }
             Presets.GRID -> {
                 val views = mutableListOf<View>()
                 stations.forEachIndexed { i, s -> views.add(keypadKey(i, s, i == active && wantPlaying)) }
                 val rowH = dp(104).toInt()
                 fillGrid(views, 4, rowH)
-                // höchstens zwei Reihen sichtbar, der Rest wird gescrollt
-                val gs = findViewById<View>(R.id.favGridScroll)
-                val rows = (views.size + 3) / 4
-                val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-                gs.layoutParams = (gs.layoutParams as LinearLayout.LayoutParams).apply {
-                    height = if (land) 0 else ViewGroup.LayoutParams.WRAP_CONTENT
-                    weight = if (land) 1f else 0f
-                    if (!land && rows > 2) height = 2 * (rowH + dp(6).toInt())
-                }
+                showGrid(true, if ((views.size + 3) / 4 > 2) 2 * (rowH + dp(6).toInt()) else 0)
                 return
             }
         }
