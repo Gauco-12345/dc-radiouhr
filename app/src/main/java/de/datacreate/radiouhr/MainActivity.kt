@@ -536,7 +536,7 @@ class MainActivity : ScaledActivity() {
     }
 
     /** Passt die Uhr nicht mehr hin (Wetter, Termine …), wird sie verkleinert. */
-    private val fitClock = object : Runnable {
+    private val fitClock: Runnable = object : Runnable {
         override fun run() {
             try {
                 fit()
