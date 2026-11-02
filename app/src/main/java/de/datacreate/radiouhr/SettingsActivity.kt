@@ -302,6 +302,13 @@ class SettingsActivity : ScaledActivity() {
             main.post { recreate() }
         }
         c.addView(small("„automatisch“ passt alles an die Bildschirmgröße an (Handy, 8-Zoll-Tablet …). Mit % feiner einstellen."))
+        val sizes = listOf(60, 70, 80, 90, 100, 115, 130, 150, 175, 200)
+        spinner(c, "Senderkacheln", sizes.map { "$it %" }, maxOf(0, sizes.indexOf(prefs.getInt("favScale", 100)))) {
+            prefs.edit().putInt("favScale", sizes[it]).apply()
+        }
+        spinner(c, "Tasten (Timer, ＋, Zahnrad)", sizes.map { "$it %" }, maxOf(0, sizes.indexOf(prefs.getInt("btnScale", 100)))) {
+            prefs.edit().putInt("btnScale", sizes[it]).apply()
+        }
 
         }
         if (tab == 1) {

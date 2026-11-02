@@ -599,14 +599,14 @@ class MainActivity : ScaledActivity() {
         for (v in listOf<View>(btnTimer, btnAdd)) (v.parent as? ViewGroup)?.removeView(v)
         side.orientation = LinearLayout.VERTICAL
         side.gravity = Gravity.CENTER_HORIZONTAL
-        val size = dp(40).toInt()
+        val size = bdp(40)
         val m = dp(3).toInt()
-        val pad = dp(9).toInt()
+        val pad = bdp(9)
         timerIcon.setPadding(pad, pad, pad, pad)
         btnAdd.setPadding(pad, pad, pad, pad)
         side.addView(btnTimer, 0, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
         side.addView(btnAdd, 1, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
-        volSlider.layoutParams = LinearLayout.LayoutParams(dp(40).toInt(), 0, 1f).apply { topMargin = m }
+        volSlider.layoutParams = LinearLayout.LayoutParams(maxOf(dp(40).toInt(), size), 0, 1f).apply { topMargin = m }
         findViewById<View>(R.id.radioMain).layoutParams = LinearLayout.LayoutParams(0,
             if (land) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -617,12 +617,12 @@ class MainActivity : ScaledActivity() {
         // Querformat: Zahnrad oben in dieser Spalte (überdeckt dann nichts), Hochformat: oben rechts in der Ecke
         (btnGear.parent as? ViewGroup)?.removeView(btnGear)
         if (land) {
-            btnGear.setPadding(dp(8).toInt(), dp(8).toInt(), dp(8).toInt(), dp(8).toInt())
+            btnGear.setPadding(bdp(8), bdp(8), bdp(8), bdp(8))
             side.addView(btnGear, 0, LinearLayout.LayoutParams(size, size).apply { setMargins(0, 0, 0, m * 2) })
         } else {
-            btnGear.setPadding(dp(11).toInt(), dp(11).toInt(), dp(11).toInt(), dp(11).toInt())
+            btnGear.setPadding(bdp(11), bdp(11), bdp(11), bdp(11))
             val frame = findViewById<android.widget.FrameLayout>(R.id.frame)
-            frame.addView(btnGear, android.widget.FrameLayout.LayoutParams(dp(44).toInt(), dp(44).toInt(),
+            frame.addView(btnGear, android.widget.FrameLayout.LayoutParams(bdp(44), bdp(44),
                 Gravity.TOP or Gravity.END).apply { setMargins(m, m, m, m) })
         }
     }
@@ -1450,7 +1450,7 @@ class MainActivity : ScaledActivity() {
             setTextColor(if (active) skin.accent else col("#9AA3AD"))
             gravity = Gravity.CENTER
         })
-        val size = dp(44).toInt()
+        val size = fdp(44)
         key.addView(logoView(s, size), LinearLayout.LayoutParams(size, size))
         key.addView(TextView(this).apply {
             text = s.name
@@ -1496,12 +1496,17 @@ class MainActivity : ScaledActivity() {
     private fun panelWidthPx(): Int {
         val dm = resources.displayMetrics
         val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val side = dp(58)
+        val side = dp(18) + maxOf(dp(40), bdp(40).toFloat())
         val w = (if (land) (dm.widthPixels - dp(24)) / 2.3f - dp(8) else dm.widthPixels - dp(24)) - side
         return (w - radioPanel.paddingLeft - radioPanel.paddingRight).toInt()
     }
 
     /** Senderkacheln mehrzeilig anordnen. */
+    /** Größe der Senderkacheln bzw. der kleinen Tasten (Einstellungen → Darstellung). */
+    private fun fdp(v: Int): Int = (dp(v) * prefs.getInt("favScale", 100) / 100f).toInt()
+    private fun fsp(v: Float): Float = v * (0.6f + 0.4f * prefs.getInt("favScale", 100) / 100f)
+    private fun bdp(v: Int): Int = (dp(v) * prefs.getInt("btnScale", 100) / 100f).toInt()
+
     private fun isLand() = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     /** Raster (mehrere Reihen) oder eine wischbare Reihe zeigen. Im Querformat füllt das Raster die Resthöhe. */
@@ -1564,26 +1569,26 @@ class MainActivity : ScaledActivity() {
                 stations.forEachIndexed { i, s ->
                     if (keys) {
                         val key = ivoryKey(s.name, i == active && wantPlaying)
-                        key.textSize = 12f
+                        key.textSize = fsp(12f)
                         key.setOnClickListener { stationClick(i) }
                         key.setOnLongClickListener {
                             confirmRemove(i)
                             true
                         }
                         views.add(key)
-                    } else views.add(favItem(i, s, dp(50).toInt(), 11f, active))
+                    } else views.add(favItem(i, s, fdp(50), fsp(11f), active))
                 }
-                val cellW = if (keys) dp(86).toInt() else dp(74).toInt()
-                fillGrid(views, maxOf(1, panelWidthPx() / cellW), if (keys) dp(62).toInt() else dp(88).toInt())
+                val cellW = if (keys) fdp(86) else fdp(74)
+                fillGrid(views, maxOf(1, panelWidthPx() / cellW), if (keys) fdp(62) else fdp(88) + (fsp(11f) * 1.6f * resources.displayMetrics.scaledDensity).toInt() - dp(18).toInt())
                 showGrid(true)
                 return
             } else when (skin.presets) {
             Presets.ROW -> {
                 // eine Reihe kleiner, gleich großer Kacheln – bei vielen Sendern seitlich wischen
-                val size = dp(50).toInt()
-                val w = dp(68).toInt()
+                val size = fdp(50)
+                val w = fdp(68)
                 stations.forEachIndexed { i, s ->
-                    favRow.addView(favItem(i, s, size, 11f, active), LinearLayout.LayoutParams(w, dp(88).toInt()))
+                    favRow.addView(favItem(i, s, size, fsp(11f), active), LinearLayout.LayoutParams(w, fdp(88) + (fsp(11f) * 1.6f * resources.displayMetrics.scaledDensity).toInt() - dp(18).toInt()))
                 }
                 scrollToActive(active)
                 showGrid(false)
@@ -1592,13 +1597,13 @@ class MainActivity : ScaledActivity() {
             Presets.KEYS -> {
                 stations.forEachIndexed { i, s ->
                     val key = ivoryKey(s.name, i == active && wantPlaying)
-                    key.textSize = 12f
+                    key.textSize = fsp(12f)
                     key.setOnClickListener { stationClick(i) }
                     key.setOnLongClickListener {
                         confirmRemove(i)
                         true
                     }
-                    favRow.addView(key, LinearLayout.LayoutParams(dp(74).toInt(), dp(60).toInt()).apply {
+                    favRow.addView(key, LinearLayout.LayoutParams(fdp(74), fdp(60)).apply {
                         setMargins(dp(2).toInt(), 0, dp(2).toInt(), 0)
                     })
                 }
@@ -1611,7 +1616,7 @@ class MainActivity : ScaledActivity() {
             Presets.GRID -> {
                 val views = mutableListOf<View>()
                 stations.forEachIndexed { i, s -> views.add(keypadKey(i, s, i == active && wantPlaying)) }
-                val rowH = dp(104).toInt()
+                val rowH = fdp(104)
                 fillGrid(views, 4, rowH)
                 showGrid(true, if ((views.size + 3) / 4 > 2) 2 * (rowH + dp(6).toInt()) else 0)
                 return
