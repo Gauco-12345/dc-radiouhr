@@ -692,7 +692,8 @@ class MainActivity : ScaledActivity() {
             lastAutoNight = null
             return
         }
-        val should = NightZones.isNight(prefs)
+        // Läuft das Radio, bleibt die normale Ansicht – der Nachtmodus kommt erst, wenn es aus ist
+        val should = NightZones.isNight(prefs) && !wantPlaying
         if (lastAutoNight != should) {
             lastAutoNight = should
             if (!(should && alarming)) setNight(should)
@@ -701,7 +702,7 @@ class MainActivity : ScaledActivity() {
 
     private fun isNightHour(): Boolean = NightZones.isNight(prefs)
 
-    private val backToNight = Runnable { if (!night && !alarming && isNightHour()) setNight(true) }
+    private val backToNight = Runnable { if (!night && !alarming && !wantPlaying && isNightHour()) setNight(true) }
 
     private fun setNight(on: Boolean) {
         night = on
