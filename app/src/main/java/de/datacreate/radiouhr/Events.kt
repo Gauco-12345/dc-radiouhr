@@ -76,7 +76,9 @@ object Events {
             CalendarContract.Instances.CALENDAR_ID
         )
         val found = ArrayList<Ev>()
-        ctx.contentResolver.query(b.build(), proj, null, null, CalendarContract.Instances.BEGIN + " ASC")?.use { c ->
+        val perm = android.os.Build.VERSION.SDK_INT < 23 ||
+            ctx.checkSelfPermission(android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (perm) try { ctx.contentResolver.query(b.build(), proj, null, null, CalendarContract.Instances.BEGIN + " ASC")?.use { c ->
             while (c.moveToNext()) {
                 if (c.getLong(4).toString() in hide) continue
                 val title = c.getString(0)?.trim().takeUnless { it.isNullOrEmpty() } ?: "(ohne Titel)"
@@ -99,6 +101,24 @@ object Events {
                     val idx = dayIndex(begin).coerceAtLeast(0)
                     val label = if (begin < now) "jetzt" else prefix(idx, begin) + timeFmt.format(Date(begin))
                     found.add(Ev(begin, "$label  $title"))
+                }
+            }
+        } } catch (_: Exception) { }
+
+        // Kalender-Abos (iCal-Links)
+        for (sub in Ics.subs(p)) {
+            if (sub.url in hide) continue
+            val text = try { Ics.text(ctx, sub.url) } catch (_: Exception) { null } ?: continue
+            val occ = try { Ics.occurrences(text, start, end) } catch (_: Exception) { emptyList() }
+            for (o in occ) {
+                if (o.allDay) {
+                    val idx = dayIndex(o.begin).coerceAtLeast(0)
+                    if (o.end <= start) continue
+                    found.add(Ev(start + idx * dayMs - 1, prefix(idx, start + idx * dayMs + 12 * 3600_000L) + "ganztägig · ${o.title}"))
+                } else if (o.end > now || (o.end == o.begin && o.begin >= now)) {
+                    val idx = dayIndex(o.begin).coerceAtLeast(0)
+                    val label = if (o.begin < now) "jetzt" else prefix(idx, o.begin) + timeFmt.format(Date(o.begin))
+                    found.add(Ev(o.begin, "$label  ${o.title}"))
                 }
             }
         }

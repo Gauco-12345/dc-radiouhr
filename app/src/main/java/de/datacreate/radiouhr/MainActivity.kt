@@ -1178,7 +1178,7 @@ class MainActivity : ScaledActivity() {
     // ================================================================ Termine
 
     private fun loadEvents() {
-        if (!prefs.getBoolean("showEvents", true) || !hasPerm(Manifest.permission.READ_CALENDAR)) {
+        if (!prefs.getBoolean("showEvents", true) || (!hasPerm(Manifest.permission.READ_CALENDAR) && Ics.subs(prefs).isEmpty())) {
             tvEvents.visibility = View.GONE
             return
         }

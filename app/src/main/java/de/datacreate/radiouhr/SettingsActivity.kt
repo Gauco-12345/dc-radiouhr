@@ -404,6 +404,38 @@ class SettingsActivity : ScaledActivity() {
         spinner(c, "Höchstens", counts.map { "$it Termine" }, maxOf(0, counts.indexOf(prefs.getInt("evMax", 5)))) {
             prefs.edit().putInt("evMax", counts[it]).apply()
         }
+        // Kalender-Abos
+        c = card()
+        c.addView(TextView(this).apply {
+            text = "Kalender-Abo (iCal-Link)"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setPadding(dp(4), dp(8), 0, 0)
+        })
+        c.addView(small("Für Geräte ohne Google-Konto, z. B. Fire-Tablets. Google Kalender im Browser öffnen → ⚙ Einstellungen → links deinen Kalender wählen → ganz unten „Privatadresse im iCal-Format“ kopieren und hier einfügen. Geht auch mit Outlook, iCloud, Nextcloud …"))
+        val subs = Ics.subs(prefs)
+        subs.forEachIndexed { i, sub ->
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(4), dp(6), 0, dp(6))
+            }
+            row.addView(TextView(this).apply {
+                text = "📅  " + sub.name
+                textSize = 15f
+                setTextColor(Color.WHITE)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(chip("Testen") { testIcs(sub) })
+            row.addView(View(this), LinearLayout.LayoutParams(dp(8), 1))
+            row.addView(chip("✕") {
+                subs.removeAt(i)
+                Ics.save(prefs, subs)
+                build()
+            })
+            c.addView(row)
+        }
+        button(c, "＋ iCal-Link hinzufügen …") { askIcs(subs) }
+
         c = card()
         c.addView(small("Die Termine kommen aus dem Kalender dieses Geräts – also aus allen Konten, die unter Android-Einstellungen → Konten synchronisiert werden (Google, Samsung, Exchange …)."))
         val granted = android.os.Build.VERSION.SDK_INT < 23 ||
@@ -686,6 +718,65 @@ class SettingsActivity : ScaledActivity() {
             .setNeutralButton("Mo–Fr") { _, _ -> onSet(0x1F) }
             .setNegativeButton("Abbrechen", null)
             .show()
+    }
+
+    private fun askIcs(subs: MutableList<Ics.Sub>) {
+        val name = EditText(this).apply {
+            hint = "Name, z. B. Privat"
+            setSingleLine(true)
+            setTextColor(Color.WHITE)
+        }
+        val url = EditText(this).apply {
+            hint = "https://calendar.google.com/…/basic.ics"
+            setSingleLine(true)
+            setTextColor(Color.WHITE)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim().orEmpty()
+        if (clip.contains(".ics") || clip.startsWith("webcal")) url.setText(clip)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(10), dp(20), 0)
+            addView(name)
+            addView(url)
+        }
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle("Kalender-Abo hinzufügen")
+            .setView(box)
+            .setPositiveButton("Hinzufügen") { _, _ ->
+                val u = Ics.normalize(url.text.toString())
+                if (!u.startsWith("http")) {
+                    Toast.makeText(this, "Bitte einen gültigen Link einfügen", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                val sub = Ics.Sub(name.text.toString().trim().ifEmpty { "Kalender ${subs.size + 1}" }, u)
+                subs.add(sub)
+                Ics.save(prefs, subs)
+                build()
+                testIcs(sub)
+            }
+            .setNegativeButton("Abbrechen", null)
+            .show()
+    }
+
+    private fun testIcs(sub: Ics.Sub) {
+        Toast.makeText(this, "Lade „${sub.name}“ …", Toast.LENGTH_SHORT).show()
+        io.execute {
+            val msg = try {
+                val t = Ics.text(this, sub.url, force = true) ?: throw IllegalStateException("keine Daten")
+                val now = System.currentTimeMillis()
+                val n = Ics.occurrences(t, now - 86400000L, now + 7 * 86400000L).size
+                val all = Regex("BEGIN:VEVENT").findAll(t).count()
+                "OK – $all Termine im Kalender, $n in den nächsten 7 Tagen"
+            } catch (e: Exception) {
+                "Fehler: ${e.message}"
+            }
+            main.post {
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                build()
+            }
+        }
     }
 
     private fun previewBrightness(pct: Int) {
