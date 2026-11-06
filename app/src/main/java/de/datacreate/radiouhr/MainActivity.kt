@@ -829,7 +829,7 @@ class MainActivity : ScaledActivity() {
         }
         btnTimer.visibility = vis(k.extraButtons)
         btnNight.visibility = View.GONE
-        if (on || !k.events) tvEvents.visibility = View.GONE else loadEvents()
+        if (on) tvEvents.visibility = View.GONE else loadEvents()
 
         // Tasten
         btnPlay.background = btnBg(primary = true)
@@ -1178,17 +1178,17 @@ class MainActivity : ScaledActivity() {
     // ================================================================ Termine
 
     private fun loadEvents() {
-        if (!skin.events || !prefs.getBoolean("showEvents", true) || !hasPerm(Manifest.permission.READ_CALENDAR)) {
+        if (!prefs.getBoolean("showEvents", true) || !hasPerm(Manifest.permission.READ_CALENDAR)) {
             tvEvents.visibility = View.GONE
             return
         }
         io.execute {
             val lines = try { queryToday() } catch (_: Exception) { null }
             main.post {
-                if (lines == null || night || !skin.events) {
+                if (lines == null || night) {
                     tvEvents.visibility = View.GONE
                 } else {
-                    tvEvents.text = if (lines.isEmpty()) "Heute keine Termine mehr" else lines.joinToString("\n")
+                    tvEvents.text = if (lines.isEmpty()) (if (prefs.getInt("evDays", 1) > 1) "Keine Termine" else "Heute keine Termine mehr") else lines.joinToString("\n")
                     tvEvents.visibility = View.VISIBLE
                     refitClock()
                 }
@@ -1196,50 +1196,12 @@ class MainActivity : ScaledActivity() {
         }
     }
 
-    private fun queryToday(): List<String> {
-        val day = 24 * 60 * 60_000L
-        val cal = Calendar.getInstance()
-        val y = cal.get(Calendar.YEAR)
-        val m = cal.get(Calendar.MONTH)
-        val d = cal.get(Calendar.DAY_OF_MONTH)
-        cal.set(y, m, d, 0, 0, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        val start = cal.timeInMillis
-        val end = start + day
-        val now = System.currentTimeMillis()
-        val todayUtc = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
-            clear()
-            set(y, m, d)
-        }.timeInMillis
-
-        val b = CalendarContract.Instances.CONTENT_URI.buildUpon()
-        ContentUris.appendId(b, start - day)
-        ContentUris.appendId(b, end + day)
-        val proj = arrayOf(
-            CalendarContract.Instances.TITLE,
-            CalendarContract.Instances.BEGIN,
-            CalendarContract.Instances.END,
-            CalendarContract.Instances.ALL_DAY
-        )
-        val found = mutableListOf<Pair<Long, String>>()
-        contentResolver.query(b.build(), proj, null, null, CalendarContract.Instances.BEGIN + " ASC")?.use { c ->
-            while (c.moveToNext()) {
-                val title = c.getString(0)?.trim().takeUnless { it.isNullOrEmpty() } ?: "(ohne Titel)"
-                val begin = c.getLong(1)
-                val stop = c.getLong(2)
-                val allDay = c.getInt(3) == 1
-                if (allDay) {
-                    if (todayUtc >= begin && todayUtc < stop) found.add(Long.MIN_VALUE to "ganztägig · $title")
-                } else if (begin < end && stop > now) {
-                    val label = if (begin < now) "jetzt" else timeFmt.format(Date(begin))
-                    found.add(begin to "$label  $title")
-                }
-            }
-        }
-        val sorted = found.sortedBy { it.first }.map { it.second }.distinct()
+    private fun queryToday(): List<String> = Events.query(this, prefs).let { list ->
         val max = prefs.getInt("evMax", 5)
-        return if (sorted.size > max) sorted.take(max - 1) + "+ ${sorted.size - max + 1} weitere" else sorted
+        val lines = list.map { it.label }
+        if (lines.size > max) lines.take(max - 1) + "+ ${lines.size - max + 1} weitere" else lines
     }
+
 
     // ================================================================ Radio
 

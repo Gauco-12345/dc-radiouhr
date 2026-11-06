@@ -54,6 +54,11 @@ class SettingsActivity : ScaledActivity() {
         setupFrame()
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        build()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putInt("tab", tab)
@@ -389,10 +394,66 @@ class SettingsActivity : ScaledActivity() {
         // Termine
         section("Termine")
         c = card()
-        check(c, "Heutige Termine anzeigen", "showEvents", true)
+        check(c, "Termine anzeigen", "showEvents", true)
+        val ranges = listOf(1, 2, 3, 7)
+        spinner(c, "Zeitraum", listOf("nur heute", "heute + morgen", "3 Tage", "7 Tage"), maxOf(0, ranges.indexOf(prefs.getInt("evDays", 1)))) {
+            prefs.edit().putInt("evDays", ranges[it]).apply()
+            main.post { build() }
+        }
         val counts = (2..8).toList()
-        spinner(c, "Höchstens", counts.map { "$it Termine" }, counts.indexOf(prefs.getInt("evMax", 5))) {
+        spinner(c, "Höchstens", counts.map { "$it Termine" }, maxOf(0, counts.indexOf(prefs.getInt("evMax", 5)))) {
             prefs.edit().putInt("evMax", counts[it]).apply()
+        }
+        c = card()
+        c.addView(small("Die Termine kommen aus dem Kalender dieses Geräts – also aus allen Konten, die unter Android-Einstellungen → Konten synchronisiert werden (Google, Samsung, Exchange …)."))
+        val granted = android.os.Build.VERSION.SDK_INT < 23 ||
+            checkSelfPermission(android.Manifest.permission.READ_CALENDAR) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            c.addView(TextView(this).apply {
+                text = "✗ Kein Zugriff auf den Kalender"
+                textSize = 15f
+                setTextColor(col("#FF8080"))
+                setPadding(dp(4), dp(8), 0, dp(4))
+            })
+            button(c, "Zugriff erlauben …") {
+                if (android.os.Build.VERSION.SDK_INT >= 23) requestPermissions(arrayOf(android.Manifest.permission.READ_CALENDAR), 7)
+            }
+            button(c, "App-Berechtigungen öffnen", "falls die Abfrage nicht mehr erscheint") {
+                startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
+            }
+        } else {
+            val cals = try { Events.calendars(this) } catch (_: Exception) { emptyList() }
+            val evs = try { Events.query(this, prefs) } catch (_: Exception) { emptyList() }
+            c.addView(TextView(this).apply {
+                text = "✓ Zugriff erlaubt · ${cals.size} Kalender · ${evs.size} Termine im Zeitraum"
+                textSize = 15f
+                setTextColor(col("#8CE08C"))
+                setPadding(dp(4), dp(8), 0, dp(4))
+            })
+            if (cals.isEmpty()) {
+                c.addView(small("Auf diesem Gerät ist kein Kalender synchronisiert. In den Android-Einstellungen → Konten → Google → Kalender-Synchronisierung einschalten (bei Samsung zusätzlich in der Kalender-App unter Kalender verwalten)."))
+            } else {
+                c.addView(small("Diese Kalender verwenden:"))
+                val hidden = Events.hidden(prefs).toMutableSet()
+                for (cal in cals) {
+                    val cb = CheckBox(this).apply {
+                        text = cal.name + (if (cal.account.isNotEmpty() && cal.account != cal.name) "  ·  ${cal.account}" else "") +
+                            (if (!cal.sync) "  (nicht synchronisiert)" else "")
+                        textSize = 14f
+                        setTextColor(Color.WHITE)
+                        isChecked = cal.id.toString() !in hidden
+                        buttonTintList = android.content.res.ColorStateList.valueOf(cal.color or 0xFF000000.toInt())
+                        setOnCheckedChangeListener { _, v ->
+                            if (v) hidden.remove(cal.id.toString()) else hidden.add(cal.id.toString())
+                            prefs.edit().putStringSet("calHidden", HashSet(hidden)).apply()
+                        }
+                    }
+                    c.addView(cb)
+                }
+                if (evs.isNotEmpty()) {
+                    c.addView(small("\nGefunden:\n" + evs.take(8).joinToString("\n") { "• " + it.label }))
+                }
+            }
         }
 
         }
