@@ -651,7 +651,7 @@ class SettingsActivity : ScaledActivity() {
             setTextColor(Color.WHITE)
             setPadding(dp(4), dp(8), 0, dp(4))
         })
-        button(c, "Nach Update suchen …", "lädt die neueste Version direkt von GitHub und installiert sie") { checkUpdate() }
+        button(c, "Nach Update suchen …", "prüft die neueste Version und öffnet den Download im Browser") { checkUpdate() }
 
         // Sichern
         section("Sichern & Übertragen")
@@ -857,8 +857,8 @@ class SettingsActivity : ScaledActivity() {
                 } else {
                     AlertDialog.Builder(this, dlgTheme)
                         .setTitle("Neue Version ${res.second}")
-                        .setMessage("Installiert ist ${Updater.installedName(this)}.\nJetzt herunterladen und installieren? Deine Einstellungen bleiben erhalten.")
-                        .setPositiveButton("Installieren") { _, _ -> startUpdate() }
+                        .setMessage("Installiert ist ${Updater.installedName(this)}.\nJetzt herunterladen? Der Browser lädt die Datei, danach öffnen und installieren – deine Einstellungen bleiben erhalten.")
+                        .setPositiveButton("Herunterladen") { _, _ -> startUpdate() }
                         .setNegativeButton("Später", null)
                         .show()
                 }
@@ -867,32 +867,12 @@ class SettingsActivity : ScaledActivity() {
     }
 
     private fun startUpdate() {
-        if (!Updater.canInstall(this)) {
-            Toast.makeText(this, "Bitte „Apps aus dieser Quelle zulassen“ einschalten und dann erneut tippen", Toast.LENGTH_LONG).show()
-            Updater.openInstallPermission(this)
-            return
+        Toast.makeText(this, "Download startet im Browser – danach die Datei öffnen und installieren", Toast.LENGTH_LONG).show()
+        try {
+            Updater.openDownload(this)
+        } catch (_: Exception) {
+            Toast.makeText(this, "Kein Browser gefunden", Toast.LENGTH_LONG).show()
         }
-        val tv = TextView(this).apply {
-            text = "Lade … 0 %"
-            textSize = 18f
-            setTextColor(Color.WHITE)
-            setPadding(dp(24), dp(20), dp(24), dp(10))
-        }
-        val dlg = AlertDialog.Builder(this, dlgTheme).setTitle("Update").setView(tv).setCancelable(false).show()
-        Thread {
-            try {
-                val f = Updater.download(this) { pct -> main.post { tv.text = "Lade … $pct %" } }
-                main.post {
-                    dlg.dismiss()
-                    Updater.install(this, f)
-                }
-            } catch (e: Exception) {
-                main.post {
-                    dlg.dismiss()
-                    Toast.makeText(this, "Download fehlgeschlagen: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }.start()
     }
 
     private fun previewBrightness(pct: Int) {
