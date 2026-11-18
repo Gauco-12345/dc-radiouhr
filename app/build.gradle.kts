@@ -11,8 +11,8 @@ android {
         applicationId = "de.datacreate.radiouhr"
         minSdk = 21
         targetSdk = 34
-        versionCode = 27
-        versionName = "4.0"
+        versionCode = 28
+        versionName = "4.1"
     }
 
     signingConfigs {
@@ -44,5 +44,6 @@ android {
 
 dependencies {
     implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.core:core:1.13.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
 }

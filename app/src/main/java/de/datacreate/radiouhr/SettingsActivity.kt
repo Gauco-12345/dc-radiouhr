@@ -45,7 +45,7 @@ class SettingsActivity : ScaledActivity() {
     private var tab = 0
     private lateinit var tabBox: LinearLayout
     private lateinit var scroll: ScrollView
-    private val TABS = listOf("Darstellung", "Wetter", "Netatmo", "Wecker", "Nacht", "Radio & Termine", "Sichern")
+    private val TABS = listOf("Darstellung", "Wetter", "Netatmo", "Wecker", "Nacht", "Radio & Termine", "Sichern & Update")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -598,6 +598,17 @@ class SettingsActivity : ScaledActivity() {
 
         }
         if (tab == 6) {
+        // Update
+        section("Update")
+        c = card()
+        c.addView(TextView(this).apply {
+            text = "Installiert: Version ${Updater.installedName(this@SettingsActivity)}"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setPadding(dp(4), dp(8), 0, dp(4))
+        })
+        button(c, "Nach Update suchen …", "lädt die neueste Version direkt von GitHub und installiert sie") { checkUpdate() }
+
         // Sichern
         section("Sichern & Übertragen")
         c = card()
@@ -781,6 +792,63 @@ class SettingsActivity : ScaledActivity() {
                 build()
             }
         }
+    }
+
+    private fun checkUpdate() {
+        Toast.makeText(this, "Suche nach Update …", Toast.LENGTH_SHORT).show()
+        io.execute {
+            val res = try { Updater.latest() } catch (e: Exception) { null }
+            main.post {
+                if (res == null) {
+                    Toast.makeText(this, "Update-Server nicht erreichbar", Toast.LENGTH_LONG).show()
+                    return@post
+                }
+                val mine = Updater.installedCode(this)
+                if (res.first <= mine) {
+                    AlertDialog.Builder(this, dlgTheme)
+                        .setMessage("Du hast bereits die neueste Version (${Updater.installedName(this)}).")
+                        .setPositiveButton("OK", null)
+                        .setNeutralButton("Trotzdem neu installieren") { _, _ -> startUpdate() }
+                        .show()
+                } else {
+                    AlertDialog.Builder(this, dlgTheme)
+                        .setTitle("Neue Version ${res.second}")
+                        .setMessage("Installiert ist ${Updater.installedName(this)}.\nJetzt herunterladen und installieren? Deine Einstellungen bleiben erhalten.")
+                        .setPositiveButton("Installieren") { _, _ -> startUpdate() }
+                        .setNegativeButton("Später", null)
+                        .show()
+                }
+            }
+        }
+    }
+
+    private fun startUpdate() {
+        if (!Updater.canInstall(this)) {
+            Toast.makeText(this, "Bitte „Apps aus dieser Quelle zulassen“ einschalten und dann erneut tippen", Toast.LENGTH_LONG).show()
+            Updater.openInstallPermission(this)
+            return
+        }
+        val tv = TextView(this).apply {
+            text = "Lade … 0 %"
+            textSize = 18f
+            setTextColor(Color.WHITE)
+            setPadding(dp(24), dp(20), dp(24), dp(10))
+        }
+        val dlg = AlertDialog.Builder(this, dlgTheme).setTitle("Update").setView(tv).setCancelable(false).show()
+        Thread {
+            try {
+                val f = Updater.download(this) { pct -> main.post { tv.text = "Lade … $pct %" } }
+                main.post {
+                    dlg.dismiss()
+                    Updater.install(this, f)
+                }
+            } catch (e: Exception) {
+                main.post {
+                    dlg.dismiss()
+                    Toast.makeText(this, "Download fehlgeschlagen: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
     }
 
     private fun previewBrightness(pct: Int) {

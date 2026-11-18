@@ -78,8 +78,20 @@ class PodcastPanel(private val h: PodcastHost) {
 
     // ------------------------------------------------------------ Öffnen / Schließen
 
+    private var keepState = false
+    private var lastEps: Pair<Podcast.Pod, List<Podcast.Ep>>? = null
+    private val statusViews = HashMap<String, TextView>()
+
+    /** Nach dem Drehen neu aufbauen und die aktuelle Seite behalten. */
+    fun relayout(frame: FrameLayout) {
+        hide(keep = true)
+        keepState = true
+        show(frame)
+    }
+
     fun show(frame: FrameLayout) {
         if (root != null) return
+        val land = a.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val r = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
@@ -110,7 +122,7 @@ class PodcastPanel(private val h: PodcastHost) {
             setPadding(dp(12), dp(4), dp(12), dp(12))
         }
         scroll.addView(list)
-        r.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        val body = LinearLayout(a).apply { orientation = if (land) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL }
 
         // Player unten
         bar = LinearLayout(a).apply {
@@ -119,17 +131,23 @@ class PodcastPanel(private val h: PodcastHost) {
             setPadding(dp(14), dp(10), dp(14), dp(12))
         }
         val top = LinearLayout(a).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            gravity = if (land) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL
         }
         barArt = ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-        top.addView(barArt, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(10) })
+        if (land) top.addView(barArt, LinearLayout.LayoutParams(dp(150), dp(150)).apply { bottomMargin = dp(12) })
+        else top.addView(barArt, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(10) })
         val tt = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         barTitle = TextView(a).apply { textSize = 15f; setTextColor(Color.WHITE); maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
         barSub = TextView(a).apply { textSize = 12f; setTextColor(sub); setSingleLine(true); ellipsize = TextUtils.TruncateAt.END }
         tt.addView(barTitle)
         tt.addView(barSub)
-        top.addView(tt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (land) {
+            barTitle.gravity = Gravity.CENTER
+            barSub.gravity = Gravity.CENTER
+            barTitle.maxLines = 3
+            top.addView(tt, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        } else top.addView(tt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(top)
         seek = SeekBar(a).apply {
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -168,7 +186,16 @@ class PodcastPanel(private val h: PodcastHost) {
         }
         ctr.addView(bSpeed)
         bar.addView(ctr)
-        r.addView(bar)
+        if (land) {
+            // links 1/3 Steuerung, rechts 2/3 Liste
+            bar.gravity = Gravity.CENTER
+            body.addView(bar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            body.addView(scroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 2f))
+        } else {
+            body.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            body.addView(bar)
+        }
+        r.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         frame.addView(r, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         r.isFocusableInTouchMode = true
@@ -178,14 +205,23 @@ class PodcastPanel(private val h: PodcastHost) {
         }
         root = r
         val c = h.current()
-        if (c != null && screen == "home") showEpisodes(c.first) else showHome()
+        if (keepState) {
+            keepState = false
+            when (screen) {
+                "episodes" -> curPod?.let { showEpisodes(it) } ?: showHome()
+                "search" -> showSearch()
+                "results" -> search(lastQuery)
+                else -> showHome()
+            }
+        } else if (c != null && screen == "home") showEpisodes(c.first) else showHome()
         refresh()
     }
 
-    fun hide() {
+    fun hide(keep: Boolean = false) {
         root?.let { (it.parent as? ViewGroup)?.removeView(it) }
         root = null
-        screen = "home"
+        statusViews.clear()
+        if (!keep) screen = "home"
     }
 
     fun back() {
@@ -288,6 +324,25 @@ class PodcastPanel(private val h: PodcastHost) {
         list.removeAllViews()
         scroll.scrollTo(0, 0)
         val subs = Podcast.subs(h.prefs)
+        val dls = Podcast.downloads(a, h.prefs)
+        if (dls.isNotEmpty()) {
+            list.addView(TextView(a).apply {
+                text = "HERUNTERGELADEN  (lange drücken = löschen)"
+                textSize = 12f
+                setTextColor(h.accent())
+                setPadding(dp(6), dp(8), 0, dp(4))
+            })
+            for ((pod, ep) in dls) {
+                row(ep.art.ifEmpty { pod.art }, ep.title, pod.title + " · " + Podcast.sizeMb(a, ep), onClick = {
+                    h.play(pod, ep)
+                    refresh()
+                }, onLong = {
+                    Podcast.deleteDownload(a, h.prefs, ep)
+                    Toast.makeText(a, "Download gelöscht", Toast.LENGTH_SHORT).show()
+                    showHome()
+                })
+            }
+        }
         if (subs.isEmpty()) {
             msg("Noch keine Podcasts abonniert.\nOben auf „Suchen“ tippen, z. B. nach „Tagesschau“, „Deutschlandfunk“ oder einem Thema.")
             return
@@ -391,7 +446,31 @@ class PodcastPanel(private val h: PodcastHost) {
         }
     }
 
+    private fun startDownload(pod: Podcast.Pod, e: Podcast.Ep) {
+        Toast.makeText(a, "Download gestartet", Toast.LENGTH_SHORT).show()
+        Podcast.download(a, h.prefs, pod, e) { ok ->
+            h.ui {
+                Toast.makeText(a, if (ok) "„${e.title}“ heruntergeladen" else "Download fehlgeschlagen", Toast.LENGTH_SHORT).show()
+                updateStatus()
+            }
+        }
+    }
+
+    private fun updateStatus() {
+        for ((url, tv) in statusViews) {
+            val pr = Podcast.progress[url]
+            val ep = lastEps?.second?.firstOrNull { it.url == url }
+            when {
+                pr != null -> { tv.text = "⬇ $pr %"; tv.setTextColor(h.accent()) }
+                ep != null && Podcast.isDownloaded(a, ep) -> { tv.text = "✓⬇"; tv.setTextColor(h.accent()) }
+                else -> { tv.text = "⬇"; tv.setTextColor(Color.WHITE) }
+            }
+        }
+    }
+
     private fun renderEpisodes(p0: Podcast.Pod, eps: List<Podcast.Ep>) {
+        lastEps = p0 to eps
+        statusViews.clear()
         val pod = if (p0.art.isEmpty() && curPod != null) Podcast.Pod(p0.feed, p0.title, p0.author, curPod!!.art) else p0
         val y = scroll.scrollY
         list.removeAllViews()
@@ -423,16 +502,41 @@ class PodcastPanel(private val h: PodcastHost) {
                 pos > 0 && e.durationSec > 0 -> info.append(" · noch ").append(Podcast.fmtTime(e.durationSec * 1000 - pos))
                 pos > 0 -> info.append(" · angefangen")
             }
-            row("", e.title, info.toString(), dim = done && !playing, onClick = {
+            val rw = row("", e.title, info.toString(), dim = done && !playing, onClick = {
                 h.play(pod, e)
                 renderEpisodes(p0, eps)
             }, onLong = {
-                Podcast.setDone(h.prefs, e, !done)
-                renderEpisodes(p0, eps)
+                val dl = Podcast.isDownloaded(a, e)
+                val items = arrayOf(if (done) "Als ungehört markieren" else "Als gehört markieren",
+                    if (dl) "Download löschen" else "Herunterladen")
+                android.app.AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                    .setTitle(e.title)
+                    .setItems(items) { _, w ->
+                        if (w == 0) Podcast.setDone(h.prefs, e, !done)
+                        else if (dl) Podcast.deleteDownload(a, h.prefs, e)
+                        else startDownload(pod, e)
+                        renderEpisodes(p0, eps)
+                    }
+                    .show()
             })
+            val st = TextView(a).apply {
+                textSize = 15f
+                gravity = Gravity.CENTER
+                setPadding(dp(12), dp(10), dp(6), dp(10))
+                setOnClickListener {
+                    when {
+                        Podcast.progress.containsKey(e.url) -> {}
+                        Podcast.isDownloaded(a, e) -> Toast.makeText(a, "Heruntergeladen (${Podcast.sizeMb(a, e)}) – lange drücken zum Löschen", Toast.LENGTH_SHORT).show()
+                        else -> { startDownload(pod, e); updateStatus() }
+                    }
+                }
+            }
+            statusViews[e.url] = st
+            rw.addView(st)
         }
+        updateStatus()
         if (eps.isEmpty()) msg("Keine Folgen gefunden.")
-        else msg("Lange drücken = als gehört / ungehört markieren")
+        else msg("⬇ = herunterladen (zum Hören ohne Internet) · lange drücken = gehört / Download löschen")
         scroll.post { scroll.scrollTo(0, y) }
     }
 
@@ -440,6 +544,7 @@ class PodcastPanel(private val h: PodcastHost) {
 
     fun refresh() {
         if (root == null) return
+        if (Podcast.progress.isNotEmpty()) updateStatus()
         val c = h.current()
         bar.visibility = if (c == null) View.GONE else View.VISIBLE
         if (c == null) return

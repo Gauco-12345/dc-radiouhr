@@ -34,7 +34,11 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
       - name: APK für festen Download-Link vorbereiten
         if: github.ref == 'refs/heads/main'
-        run: cp app/build/outputs/apk/debug/app-debug.apk DC-Radiouhr.apk
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk DC-Radiouhr.apk
+          code=$(grep -oE 'versionCode = [0-9]+' app/build.gradle.kts | grep -oE '[0-9]+')
+          name=$(grep -oE 'versionName = "[^"]+"' app/build.gradle.kts | cut -d'"' -f2)
+          echo "$code $name" > version.txt
       - name: Download-Link aktualisieren
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
@@ -42,6 +46,8 @@ jobs:
           tag_name: aktuell
           name: DC Radiouhr – aktuelle Version
           body: "Immer die neueste Version: DC-Radiouhr.apk herunterladen und installieren."
-          files: DC-Radiouhr.apk
+          files: |
+            DC-Radiouhr.apk
+            version.txt
           overwrite_files: true
           make_latest: true

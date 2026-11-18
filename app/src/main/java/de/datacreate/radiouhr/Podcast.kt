@@ -51,6 +51,107 @@ object Podcast {
     fun done(p: SharedPreferences, ep: Ep): Boolean = p.getBoolean("pd_" + key(ep), false)
     fun setDone(p: SharedPreferences, ep: Ep, v: Boolean) { p.edit().putBoolean("pd_" + key(ep), v).putLong("pp_" + key(ep), 0L).apply() }
 
+    // ------------------------------------------------------------ Downloads
+
+    val progress = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    fun dlDir(ctx: Context): File = File(ctx.getExternalFilesDir(null) ?: ctx.filesDir, "podcasts").apply { mkdirs() }
+
+    private fun ext(url: String): String {
+        val path = url.substringBefore('?').substringAfterLast('/')
+        val e = path.substringAfterLast('.', "")
+        return if (e.length in 2..4) ".$e" else ".mp3"
+    }
+
+    fun localFile(ctx: Context, ep: Ep): File = File(dlDir(ctx), key(ep) + ext(ep.url))
+    fun isDownloaded(ctx: Context, ep: Ep): Boolean = localFile(ctx, ep).let { it.exists() && it.length() > 0 }
+
+    private fun toJson(pod: Pod, ep: Ep) = JSONObject()
+        .put("feed", pod.feed).put("ptitle", pod.title).put("author", pod.author).put("part", pod.art)
+        .put("id", ep.id).put("title", ep.title).put("date", ep.date).put("url", ep.url).put("dur", ep.durationSec).put("art", ep.art)
+
+    private fun fromJson(o: JSONObject): Pair<Pod, Ep> =
+        Pod(o.optString("feed"), o.optString("ptitle"), o.optString("author"), o.optString("part")) to
+            Ep(o.optString("id"), o.optString("title"), o.optLong("date"), o.optString("url"), o.optLong("dur"), o.optString("art"))
+
+    fun downloads(ctx: Context, p: SharedPreferences): List<Pair<Pod, Ep>> = try {
+        val a = JSONArray(p.getString("podDl", "[]"))
+        (0 until a.length()).map { fromJson(a.getJSONObject(it)) }.filter { isDownloaded(ctx, it.second) }
+    } catch (_: Exception) { emptyList() }
+
+    private fun saveDownloads(p: SharedPreferences, list: List<Pair<Pod, Ep>>) {
+        val a = JSONArray()
+        for ((pod, ep) in list) a.put(toJson(pod, ep))
+        p.edit().putString("podDl", a.toString()).apply()
+    }
+
+    @Synchronized
+    private fun addDownload(ctx: Context, p: SharedPreferences, pod: Pod, ep: Ep) {
+        val l = downloads(ctx, p).filter { it.second.url != ep.url }.toMutableList()
+        l.add(0, pod to ep)
+        saveDownloads(p, l)
+    }
+
+    fun deleteDownload(ctx: Context, p: SharedPreferences, ep: Ep) {
+        localFile(ctx, ep).delete()
+        saveDownloads(p, downloads(ctx, p).filter { it.second.url != ep.url })
+    }
+
+    /** Folge im Hintergrund herunterladen; onDone(ok) im Hintergrund-Thread. */
+    fun download(ctx: Context, p: SharedPreferences, pod: Pod, ep: Ep, onDone: (Boolean) -> Unit) {
+        if (progress.containsKey(ep.url)) return
+        progress[ep.url] = 0
+        Thread {
+            val target = localFile(ctx, ep)
+            val part = File(target.path + ".part")
+            var ok = false
+            try {
+                var u = java.net.URL(ep.url)
+                var c: java.net.HttpURLConnection
+                var hops = 0
+                while (true) {
+                    c = u.openConnection() as java.net.HttpURLConnection
+                    c.instanceFollowRedirects = false
+                    c.connectTimeout = 15000
+                    c.readTimeout = 30000
+                    c.setRequestProperty("User-Agent", "DC-Radiouhr/4 (Android)")
+                    val code = c.responseCode
+                    if (code in 300..399 && hops < 8) {
+                        u = java.net.URL(u, c.getHeaderField("Location"))
+                        c.disconnect()
+                        hops++
+                        continue
+                    }
+                    if (code !in 200..299) throw IllegalStateException("HTTP $code")
+                    break
+                }
+                val total = c.contentLength.toLong()
+                c.inputStream.use { input ->
+                    part.outputStream().use { out ->
+                        val buf = ByteArray(64 * 1024)
+                        var done = 0L
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            out.write(buf, 0, n)
+                            done += n
+                            if (total > 0) progress[ep.url] = (done * 100 / total).toInt().coerceIn(0, 99)
+                        }
+                    }
+                }
+                c.disconnect()
+                ok = part.length() > 0 && part.renameTo(target)
+                if (ok) addDownload(ctx, p, pod, ep)
+            } catch (_: Exception) {
+                part.delete()
+            }
+            progress.remove(ep.url)
+            onDone(ok)
+        }.start()
+    }
+
+    fun sizeMb(ctx: Context, ep: Ep): String = String.format(Locale.GERMANY, "%.0f MB", localFile(ctx, ep).length() / 1048576.0)
+
     fun saveLast(p: SharedPreferences, pod: Pod, ep: Ep) {
         p.edit().putString("pcLast", JSONObject()
             .put("feed", pod.feed).put("ptitle", pod.title).put("author", pod.author).put("part", pod.art)

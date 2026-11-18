@@ -185,7 +185,8 @@ class MainActivity : ScaledActivity() {
         main.removeCallbacks(retry)
         pcMode = true
         prefs.edit().putBoolean("pcMode", true).apply()
-        player.setMediaItem(MediaItem.fromUri(ep.url))
+        val local = Podcast.localFile(this, ep)
+        player.setMediaItem(if (Podcast.isDownloaded(this, ep)) MediaItem.fromUri(android.net.Uri.fromFile(local)) else MediaItem.fromUri(ep.url))
         player.prepare()
         val pos = Podcast.pos(prefs, ep)
         if (pos > 0 && !Podcast.done(prefs, ep)) player.seekTo(pos)
@@ -341,6 +342,7 @@ class MainActivity : ScaledActivity() {
         updateNextAlarm()
         if (intent?.action == Alarms.ACTION) main.post { fireAlarm() }
         main.postDelayed({ showLastCrash() }, 800)
+        main.postDelayed({ autoUpdateCheck() }, 20_000L)
     }
 
     override fun onResume() {
@@ -367,6 +369,21 @@ class MainActivity : ScaledActivity() {
         main.removeCallbacks(weatherLoop)
         savePcPos()
         // Radio läuft bewusst weiter
+    }
+
+    /** Einmal am Tag prüfen, ob es eine neue Version gibt, und kurz darauf hinweisen. */
+    private fun autoUpdateCheck() {
+        if (System.currentTimeMillis() - prefs.getLong("updChecked", 0L) < 20 * 3600_000L) return
+        prefs.edit().putLong("updChecked", System.currentTimeMillis()).apply()
+        io.execute {
+            val res = try { Updater.latest() } catch (_: Exception) { null } ?: return@execute
+            if (res.first > Updater.installedCode(this) && prefs.getLong("updNotified", 0L) != res.first) {
+                prefs.edit().putLong("updNotified", res.first).apply()
+                main.post {
+                    Toast.makeText(this, "Neue Version ${res.second} verfügbar – Zahnrad → Sichern & Update", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     private fun showLastCrash() {
@@ -567,6 +584,7 @@ class MainActivity : ScaledActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        podPanel?.let { if (it.visible) it.relayout(findViewById(R.id.frame)) }
         applyOrientation(newConfig)
         buildFavorites()
     }
@@ -1348,7 +1366,8 @@ class MainActivity : ScaledActivity() {
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(20000)
         player = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(http))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(
+                androidx.media3.datasource.DefaultDataSource.Factory(this, http)))
             .build()
         player.setAudioAttributes(
             AudioAttributes.Builder()
