@@ -22,7 +22,7 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 /** Ausführliche Wetterseite als wiederverwendbare Ansicht (eigene Seite oder Wisch-Seite). */
-class WeatherPage(private val a: Activity, private val onBack: () -> Unit) {
+class WeatherPage(private val a: Activity, private val showBack: Boolean = true, private val onBack: () -> Unit) {
 
     private val prefs: SharedPreferences = Wx.prefs(a)
     private var list: LinearLayout
@@ -190,7 +190,7 @@ class WeatherPage(private val a: Activity, private val onBack: () -> Unit) {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        head.addView(t("‹", 30f).apply {
+        if (showBack) head.addView(t("‹", 30f).apply {
             setPadding(0, 0, dp(14), 0)
             setOnClickListener { onBack() }
         })

@@ -20,6 +20,14 @@ class RadioNow(val title: String, val station: String, val art: Bitmap?, val pla
  * side = true: Querformat-Spalte (großes Bild oben), sonst flache Leiste unten.
  */
 class PlayerBar(private val h: PodcastHost, private val side: Boolean, private val idleRadio: Boolean = false) {
+    companion object {
+        /** Breite der Player-Spalte im Querformat: schmal, aber bedienbar. */
+        fun sideWidth(a: android.app.Activity): Int {
+            val dm = a.resources.displayMetrics
+            return (dm.widthPixels * 0.27f).toInt().coerceIn((200 * dm.density).toInt(), (280 * dm.density).toInt())
+        }
+    }
+
     private val a = h.activity
     private val d = a.resources.displayMetrics.density
     private fun dp(v: Int) = (v * d).toInt()
@@ -48,7 +56,7 @@ class PlayerBar(private val h: PodcastHost, private val side: Boolean, private v
         view = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(L.bar)
-            setPadding(dp(14), dp(10), dp(14), dp(20))
+            if (side) setPadding(dp(10), dp(8), dp(10), dp(18)) else setPadding(dp(14), dp(8), dp(14), dp(18))
             isClickable = true
         }
         val top = LinearLayout(a).apply {
@@ -56,7 +64,7 @@ class PlayerBar(private val h: PodcastHost, private val side: Boolean, private v
             gravity = if (side) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL
         }
         barArt = ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP; clipToOutline = true }
-        if (side) top.addView(barArt, LinearLayout.LayoutParams(dp(150), dp(150)).apply { bottomMargin = dp(12) })
+        if (side) top.addView(barArt, LinearLayout.LayoutParams(dp(120), dp(120)).apply { bottomMargin = dp(10) })
         else top.addView(barArt, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(10) })
         barText = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         barTitle = TextView(a).apply { textSize = 15f; setTextColor(L.fg); maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
@@ -162,7 +170,7 @@ class PlayerBar(private val h: PodcastHost, private val side: Boolean, private v
         if (!side) return
         val inner = view.height - view.paddingTop - view.paddingBottom
         val need = barText.height + (if (radio) 0 else dp(42) + timesRow.height) + big + dp(6) + dp(12)
-        val s = (inner - need).coerceAtMost(dp(150))
+        val s = (inner - need).coerceAtMost(dp(120))
         val want = if (s < dp(44)) 0 else s
         val lp = barArt.layoutParams as LinearLayout.LayoutParams
         if (lp.width != want) {

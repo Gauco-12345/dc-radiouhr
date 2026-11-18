@@ -671,16 +671,29 @@ class SettingsActivity : ScaledActivity() {
         if (t("Mediathek")) {
         section("Mediathek")
         c = card()
-        c.addView(small("Ein Ordner auf dem Gerät oder der SD-Karte mit Unterordnern, z. B. „Pippi Langstrumpf“, darin MP3s, Videos, Bilder oder PDFs. Ein Bild „cover.jpg“ oder „folder.jpg“ im Ordner wird als Kachel-Bild benutzt."))
-        val tree = prefs.getString("mediaTree", "") ?: ""
-        button(c, if (tree.isEmpty()) "Ordner wählen …" else "Anderen Ordner wählen …",
-            if (tree.isEmpty()) "noch kein Ordner gewählt" else Media.label(tree)) { pickMediaFolder() }
-        if (tree.isNotEmpty()) {
+        c.addView(small("Ordner auf dem Gerät oder der SD-Karte, z. B. „Hörspiele“, „Musik“ oder „Pippi Langstrumpf“ – beliebig viele. Darin MP3s, Videos, Bilder oder PDFs. Ein Bild „cover.jpg“ oder „folder.jpg“ im Ordner wird als Kachel-Bild benutzt."))
+        val trees = Media.trees(prefs)
+        for (tr in trees) {
+            button(c, "📁  " + Media.shortName(tr), Media.label(tr) + " · antippen zum Entfernen") {
+                android.app.AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+                    .setMessage("„${Media.shortName(tr)}“ aus der Mediathek entfernen? Die Dateien bleiben auf dem Gerät.")
+                    .setPositiveButton("Entfernen") { _, _ ->
+                        Media.setTrees(prefs, Media.trees(prefs) - tr)
+                        try { contentResolver.releasePersistableUriPermission(android.net.Uri.parse(tr), Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) { }
+                        build()
+                    }
+                    .setNegativeButton("Abbrechen", null)
+                    .show()
+            }
+        }
+        button(c, "＋  Ordner hinzufügen …", if (trees.isEmpty()) "noch kein Ordner gewählt" else "weiteren Ordner in die Mediathek aufnehmen") { pickMediaFolder() }
+        if (trees.isNotEmpty()) {
             check(c, "Nächste Datei im Ordner automatisch abspielen", "mediaNext", true)
             check(c, "Große Kacheln (kinderfreundlich)", "mediaBig", true)
-            button(c, "Ordner entfernen") {
-                prefs.edit().remove("mediaTree").apply()
-                build()
+            button(c, "Zwischenspeicher leeren", "Ordner und Cover werden neu eingelesen") {
+                java.io.File(cacheDir, "media").deleteRecursively()
+                java.io.File(cacheDir, "thumbs").deleteRecursively()
+                Toast.makeText(this, "Zwischenspeicher geleert", Toast.LENGTH_SHORT).show()
             }
         }
         }
@@ -943,7 +956,7 @@ class SettingsActivity : ScaledActivity() {
     private val REQ_IMPORT = 42
 
     /** Zwischenspeicher, die nicht mitgenommen werden (werden neu geladen). */
-    private val SKIP = setOf("wxJson", "wxTime", "metaJson", "metaTime", "lastFire", "snoozeAt", "snoozeStation", "gpsName", "mediaTree")
+    private val SKIP = setOf("wxJson", "wxTime", "metaJson", "metaTime", "lastFire", "snoozeAt", "snoozeStation", "gpsName", "mediaTree", "mediaTrees")
 
     private fun exportData() {
         val name = "DC-Radiouhr-" + SimpleDateFormat("yyyy-MM-dd", Locale.GERMANY).format(Date()) + ".json"
@@ -1033,7 +1046,7 @@ class SettingsActivity : ScaledActivity() {
                     contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 } catch (_: Exception) {
                 }
-                prefs.edit().putString("mediaTree", uri.toString()).apply()
+                Media.setTrees(prefs, Media.trees(prefs) + uri.toString())
                 build()
             } else if (requestCode == REQ_EXPORT) {
                 contentResolver.openOutputStream(uri, "wt")?.use { it.write(buildExport().toByteArray(Charsets.UTF_8)) }

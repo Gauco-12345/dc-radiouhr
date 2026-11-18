@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.provider.DocumentsContract
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.KeyEvent
@@ -67,6 +68,13 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     private lateinit var list: LinearLayout
     private lateinit var scroll: ScrollView
     private var pbar: PlayerBar? = null
+    private var backBtn: TextView? = null
+
+    private fun updateBack() {
+        val top = if (media) viewer == null && (screen != "media" || mediaTop()) else screen == "home"
+        backBtn?.visibility = if (top) View.GONE else View.VISIBLE
+        title.setPadding(if (top) dp(10) else 0, 0, 0, 0)
+    }
     private var land = false
     private var screen = "home"
     private var curPod: Podcast.Pod? = null
@@ -110,7 +118,8 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), dp(8), dp(8), dp(4))
         }
-        head.addView(btn("‹", 28f) { back() })
+        backBtn = btn("‹", 28f) { back() }
+        head.addView(backBtn)
         title = TextView(a).apply {
             textSize = 21f
             setTextColor(fg)
@@ -119,8 +128,13 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             ellipsize = TextUtils.TruncateAt.END
         }
         head.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        // Zurück-Pfeil nur zeigen, wenn es ein „Zurück“ innerhalb der Seite gibt
+        title.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(x: CharSequence?, st: Int, c: Int, af: Int) {}
+            override fun onTextChanged(x: CharSequence?, st: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(x: android.text.Editable?) { title.post { updateBack() } }
+        })
         if (!media) head.addView(btn("Suchen", 15f) { showSearch() })
-        head.addView(btn("✕", 22f) { hide() })
         r.addView(head)
 
         scroll = ScrollView(a)
@@ -138,8 +152,8 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         if (land) {
             // links 1/3 Steuerung, rechts 2/3 Liste
             bar.gravity = Gravity.CENTER
-            body.addView(bar, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-            body.addView(scroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 2f))
+            body.addView(bar, LinearLayout.LayoutParams(PlayerBar.sideWidth(a), ViewGroup.LayoutParams.MATCH_PARENT))
+            body.addView(scroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
         } else {
             body.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
             body.addView(bar)
@@ -167,6 +181,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             }
         } else if (c != null && screen == "home" && !c.first.feed.startsWith("media:")) showEpisodes(c.first) else showHome()
         refresh()
+        updateBack()
     }
 
     fun hide(keep: Boolean = false) {
@@ -183,11 +198,12 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     fun back() {
         if (viewer != null) { closeViewer(); return }
         if (media) {
-            if (folders.size > 1) { folders.removeAt(folders.size - 1); showMediaFolder() } else hide()
+            if (folders.size > 1) { folders.removeAt(folders.size - 1); showMediaFolder() }
+            else if (folders.size == 1 && Media.trees(h.prefs).size > 1) { folders.clear(); mediaTree = ""; showMediaFolder() }
             return
         }
         when (screen) {
-            "home" -> hide()
+            "home" -> { }
             "results" -> showSearch()
             "episodes" -> if (epBack == "results") search(lastQuery) else showHome()
             else -> showHome()
@@ -573,16 +589,22 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     private val coverCache = java.util.concurrent.ConcurrentHashMap<String, android.net.Uri>()
     private var viewer: View? = null
 
-    /** Wurde in den Einstellungen ein anderer Mediathek-Ordner gewählt? */
-    fun mediaStale() = media && (h.prefs.getString("mediaTree", "") ?: "") != mediaTree
+    private var treesKey = ""
+
+    /** Wurden in den Einstellungen andere Mediathek-Ordner gewählt? */
+    fun mediaStale() = media && Media.trees(h.prefs).joinToString("\n") != treesKey
+
+    /** Ganz oben in der Mediathek (kein Zurück möglich)? */
+    private fun mediaTop() = folders.isEmpty() || (folders.size == 1 && Media.trees(h.prefs).size <= 1)
 
     private fun showMediaFolder() {
         screen = "media"
         list.removeAllViews()
-        val tree = h.prefs.getString("mediaTree", "") ?: ""
-        if (tree.isEmpty()) {
+        val trees = Media.trees(h.prefs)
+        treesKey = trees.joinToString("\n")
+        if (trees.isEmpty()) {
             title.text = "Mediathek"
-            msg("Noch kein Ordner gewählt.\n\nIn den Einstellungen unter „Mediathek“ einen Ordner wählen, z. B. „Hörspiele“ mit Unterordnern wie „Pippi Langstrumpf“. Darin können MP3s, Videos, Bilder und PDFs liegen.")
+            msg("Noch kein Ordner gewählt.\n\nIn den Einstellungen unter „Mediathek“ Ordner hinzufügen, z. B. „Hörspiele“ oder „Musik“ – gern mehrere. Darin können MP3s, Videos, Bilder und PDFs liegen.")
             list.addView(btn("Ordner wählen …", 17f) { h.openSettings(9) }.apply {
                 setTextColor(L.onAccent)
                 background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(h.accent()) }
@@ -591,27 +613,51 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             })
             return
         }
-        if (tree != mediaTree || folders.isEmpty()) {
-            mediaTree = tree
-            folders.clear()
-            coverCache.clear()
-            val rid = try { Media.rootId(tree) } catch (_: Exception) { "" }
-            folders.add(rid to "Mediathek")
+        if (mediaTree.isNotEmpty() && mediaTree !in trees) { mediaTree = ""; folders.clear() }
+        if (folders.isEmpty()) {
+            if (trees.size == 1) {
+                mediaTree = trees[0]
+                val rid = try { Media.rootId(mediaTree) } catch (_: Exception) { "" }
+                folders.add(rid to "Mediathek")
+            } else {
+                // mehrere Ordner: jeder als eigene Kachel
+                title.text = "Mediathek"
+                val roots = trees.mapNotNull { t ->
+                    try {
+                        val rid = Media.rootId(t)
+                        Media.Item(DocumentsContract.buildDocumentUriUsingTree(android.net.Uri.parse(t), rid), rid, Media.shortName(t),
+                            true, DocumentsContract.Document.MIME_TYPE_DIR, 0L) to t
+                    } catch (_: Exception) { null }
+                }
+                val big = h.prefs.getBoolean("mediaBig", true)
+                if (big) tiles(roots.map { it.first }) { d -> roots.first { it.first === d }.second }
+                else for ((d, t) in roots) row("", "📁  " + d.name, Media.label(t), onClick = { open(d, t) }).minimumHeight = dp(56)
+                return
+            }
         }
+        val tree = mediaTree
         val (docId, name) = folders.last()
-        title.text = if (folders.size == 1) "Mediathek" else name
+        title.text = if (folders.size == 1) (if (trees.size > 1) Media.shortName(tree) else "Mediathek") else name
         scroll.scrollTo(0, 0)
-        msg("Lade …")
+        val cached = Media.cached(a, tree, docId)
+        if (cached != null) renderMedia(cached) else msg("Lade …")
         h.io {
             val items = try { Media.list(a, tree, docId) } catch (e: Exception) {
-                h.ui {
+                if (cached == null) h.ui {
                     if (screen != "media") return@ui
                     list.removeAllViews()
                     msg("Ordner nicht lesbar – bitte in den Einstellungen neu wählen.\n(${e.message})")
                 }
                 return@io
             }
-            h.ui { if (screen == "media" && folders.lastOrNull()?.first == docId) renderMedia(items) }
+            if (cached != null && Media.sig(cached) == Media.sig(items)) return@io
+            h.ui {
+                if (screen == "media" && mediaTree == tree && folders.lastOrNull()?.first == docId) {
+                    val y = scroll.scrollY
+                    renderMedia(items)
+                    scroll.post { scroll.scrollTo(0, y) }
+                }
+            }
         }
     }
 
@@ -624,7 +670,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         val big = h.prefs.getBoolean("mediaBig", true)
         if (dirs.isNotEmpty()) {
             if (big) tiles(dirs) else for (d in dirs) {
-                val rw = row("", "📁  " + d.name, "", onClick = { open(d) })
+                val rw = row("", "📁  " + d.name, "", onClick = { open(d, mediaTree) })
                 rw.minimumHeight = dp(56)
             }
         }
@@ -705,13 +751,14 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
 
     private fun epOf(f: Media.Item) = Podcast.Ep(f.docId, f.title, 0L, f.uri.toString(), (durMs[f.docId] ?: 0L) / 1000, mediaArt)
 
-    private fun open(d: Media.Item) {
+    private fun open(d: Media.Item, tree: String) {
+        if (folders.isEmpty()) mediaTree = tree
         folders.add(d.docId to d.name)
         showMediaFolder()
     }
 
     /** Große Bild-Kacheln für Unterordner (für Kinder gut zu treffen). */
-    private fun tiles(dirs: List<Media.Item>) {
+    private fun tiles(dirs: List<Media.Item>, treeOf: (Media.Item) -> String = { mediaTree }) {
         val cols = if (land) 4 else 2
         val tileH = dp(if (land) 150 else 170)
         var r: LinearLayout? = null
@@ -723,7 +770,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             val t = FrameLayout(a).apply {
                 background = GradientDrawable().apply { cornerRadius = dp(16).toFloat(); setColor(tileColor(d.name)) }
                 clipToOutline = true
-                setOnClickListener { open(d) }
+                setOnClickListener { open(d, treeOf(d)) }
             }
             val iv = ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
             val ph = TextView(a).apply {
@@ -744,7 +791,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                 setBackgroundColor(Color.argb(150, 0, 0, 0))
             }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
             r!!.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
-            loadCover(d, iv)
+            loadCover(d, iv, treeOf(d))
         }
         val rest = (cols - dirs.size % cols) % cols
         repeat(rest) { r?.addView(View(a), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(dp(4), 0, dp(4), 0) }) }
@@ -755,12 +802,12 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         return c[Math.abs(name.hashCode()) % c.size]
     }
 
-    private fun loadCover(d: Media.Item, iv: ImageView) {
+    private fun loadCover(d: Media.Item, iv: ImageView, tree: String) {
         iv.tag = d.docId
         h.io {
-            val u = coverCache[d.docId] ?: run {
-                val c = try { Media.cover(Media.list(a, mediaTree, d.docId))?.uri } catch (_: Exception) { null }
-                (c ?: android.net.Uri.EMPTY).also { coverCache[d.docId] = it }
+            val u = coverCache[tree + d.docId] ?: run {
+                val c = try { Media.cover(Media.listFast(a, tree, d.docId))?.uri } catch (_: Exception) { null }
+                (c ?: android.net.Uri.EMPTY).also { coverCache[tree + d.docId] = it }
             }
             val b = if (u == android.net.Uri.EMPTY) null else h.localBitmap(u, 400)
             if (b != null) h.ui { if (iv.tag == d.docId) iv.setImageBitmap(b) }

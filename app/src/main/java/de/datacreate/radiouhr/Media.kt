@@ -52,6 +52,69 @@ object Media {
 
     fun rootId(tree: String): String = DocumentsContract.getTreeDocumentId(Uri.parse(tree))
 
+    /** Kurzer Name für eine Kachel: letzter Ordner im Pfad. */
+    fun shortName(tree: String): String {
+        val l = label(tree)
+        val path = l.substringAfter(": ", "")
+        return if (path.isEmpty()) l else path.trimEnd('/').substringAfterLast('/')
+    }
+
+    /** Alle gewählten Mediathek-Ordner (früher nur einer: „mediaTree“). */
+    fun trees(p: SharedPreferences): List<String> {
+        val raw = p.getString("mediaTrees", null)
+        if (raw == null) {
+            val old = p.getString("mediaTree", "") ?: ""
+            return if (old.isEmpty()) emptyList() else listOf(old)
+        }
+        return raw.split('\n').filter { it.isNotBlank() }
+    }
+
+    fun setTrees(p: SharedPreferences, l: List<String>) {
+        p.edit().putString("mediaTrees", l.distinct().joinToString("\n")).remove("mediaTree").apply()
+    }
+
+    // ---- Zwischenspeicher der Ordnerinhalte (große Sammlungen öffnen sofort)
+
+    private val mem = java.util.concurrent.ConcurrentHashMap<String, List<Item>>()
+
+    private fun cacheFile(ctx: Context, tree: String, docId: String): java.io.File {
+        val dir = java.io.File(ctx.cacheDir, "media").apply { mkdirs() }
+        return java.io.File(dir, Integer.toHexString((tree + "|" + docId).hashCode()) + ".json")
+    }
+
+    /** Zuletzt gelesener Inhalt (ohne auf das Speichermedium zuzugreifen), oder null. */
+    fun cached(ctx: Context, tree: String, docId: String): List<Item>? {
+        mem[tree + "|" + docId]?.let { return it }
+        return try {
+            val f = cacheFile(ctx, tree, docId)
+            if (!f.exists()) return null
+            val a = org.json.JSONArray(f.readText())
+            val out = ArrayList<Item>()
+            for (i in 0 until a.length()) {
+                val o = a.getJSONObject(i)
+                out.add(Item(Uri.parse(o.getString("u")), o.getString("i"), o.getString("n"), o.optBoolean("d"), o.optString("m"), o.optLong("s")))
+            }
+            mem[tree + "|" + docId] = out
+            out
+        } catch (_: Exception) { null }
+    }
+
+    private fun store(ctx: Context, tree: String, docId: String, items: List<Item>) {
+        mem[tree + "|" + docId] = items
+        try {
+            val a = org.json.JSONArray()
+            for (it in items) a.put(org.json.JSONObject().put("u", it.uri.toString()).put("i", it.docId).put("n", it.name)
+                .put("d", it.dir).put("m", it.mime).put("s", it.size))
+            cacheFile(ctx, tree, docId).writeText(a.toString())
+        } catch (_: Exception) { }
+    }
+
+    /** Kennung zum Vergleichen (hat sich der Ordner geändert?). */
+    fun sig(items: List<Item>) = items.joinToString("|") { it.docId + ":" + it.size }
+
+    /** Aus dem Zwischenspeicher, sonst frisch lesen. */
+    fun listFast(ctx: Context, tree: String, docId: String): List<Item> = cached(ctx, tree, docId) ?: list(ctx, tree, docId)
+
     /** Inhalt eines Ordners: zuerst Unterordner, dann Dateien – jeweils natürlich sortiert (2 vor 10). */
     fun list(ctx: Context, tree: String, docId: String): List<Item> {
         val treeUri = Uri.parse(tree)
@@ -73,7 +136,9 @@ object Media {
                 out.add(Item(DocumentsContract.buildDocumentUriUsingTree(treeUri, id), id, name, dir, mime, size))
             }
         }
-        return out.sortedWith(compareBy<Item>({ !it.dir }, { natKey(it.name) }))
+        val sorted = out.sortedWith(compareBy<Item>({ !it.dir }, { natKey(it.name) }))
+        store(ctx, tree, docId, sorted)
+        return sorted
     }
 
     /** Titelbild eines Ordners: cover.jpg/folder.jpg …, sonst das erste Bild. */

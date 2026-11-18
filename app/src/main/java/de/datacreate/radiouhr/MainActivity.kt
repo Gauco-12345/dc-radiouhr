@@ -283,7 +283,7 @@ class MainActivity : ScaledActivity() {
                     cornerRadius = dp(14)
                     setColor(Look(skin).bar)
                 }
-                root.addView(b.view, 0, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                root.addView(b.view, 0, LinearLayout.LayoutParams(PlayerBar.sideWidth(this), ViewGroup.LayoutParams.MATCH_PARENT).apply {
                     rightMargin = dp(10).toInt()
                 })
             } else {
@@ -300,7 +300,17 @@ class MainActivity : ScaledActivity() {
 
     private fun isMedia(p: Podcast.Pod?) = p?.feed?.startsWith("media:") == true
 
-    private fun decodeLocal(uri: android.net.Uri, max: Int): Bitmap? = try {
+    /** Vorschaubild mit Datei-Zwischenspeicher (Cover großer Sammlungen laden schnell). */
+    private fun decodeLocal(uri: android.net.Uri, max: Int): Bitmap? {
+        val f = java.io.File(java.io.File(cacheDir, "thumbs").apply { mkdirs() },
+            Integer.toHexString((uri.toString() + "@" + max).hashCode()) + ".jpg")
+        if (f.exists()) BitmapFactory.decodeFile(f.path)?.let { return it }
+        val b = decodeLocalRaw(uri, max) ?: return null
+        try { f.outputStream().use { b.compress(Bitmap.CompressFormat.JPEG, 85, it) } } catch (_: Exception) { }
+        return b
+    }
+
+    private fun decodeLocalRaw(uri: android.net.Uri, max: Int): Bitmap? = try {
         val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) }
         var sample = 1
@@ -429,7 +439,7 @@ class MainActivity : ScaledActivity() {
             }
             "wetter" -> {
                 if (weatherPage == null) {
-                    val wp = WeatherPage(this) { showPage("uhr", -1) }
+                    val wp = WeatherPage(this, showBack = false) { showPage("uhr", -1) }
                     weatherPage = wp
                     frameView().addView(wp.scroll, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
                 }
@@ -467,7 +477,7 @@ class MainActivity : ScaledActivity() {
         d.removeAllViews()
         val act = pages()
         if (night || !prefs.getBoolean("pagesOn", true) || act.size < 2 || videoBox != null) return
-        val c = if (pid != "uhr" && pid != "radio") Color.WHITE else skin.fg
+        val c = skin.fg
         val cur = act.indexOf(pid)
         for ((n, id) in act.withIndex()) {
             val v = View(this)
@@ -490,32 +500,69 @@ class MainActivity : ScaledActivity() {
         val loc = IntArray(2)
         v.getLocationOnScreen(loc)
         if (x < loc[0] || y < loc[1] || x > loc[0] + v.width || y > loc[1] + v.height) return false
-        if (v is android.widget.SeekBar || v is android.widget.HorizontalScrollView || v is VolumeSlider ||
-            v is KnobView || v is DialView || v is EditText) return true
+        if (v is android.widget.SeekBar || v is VolumeSlider || v is KnobView || v is DialView || v is EditText) return true
+        // waagrechte Leisten nur blockieren, wenn sie wirklich seitlich scrollen können
+        if (v is android.widget.HorizontalScrollView && (v.canScrollHorizontally(1) || v.canScrollHorizontally(-1))) return true
         if (v is ViewGroup) for (n in v.childCount - 1 downTo 0) if (blocksSwipe(v.getChildAt(n), x, y)) return true
         return false
     }
 
+    private var swiping = false
+    private var swipeView: View? = null
+
+    /** Die gerade sichtbare Seite (für die Wisch-Bewegung). */
+    private fun pageView(): View = when (pid) {
+        "podcast" -> podPanel?.rootView() ?: root
+        "medien" -> medPanel?.rootView() ?: root
+        "wetter" -> weatherPage?.scroll ?: root
+        else -> root
+    }
+
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         if (prefs.getBoolean("pagesOn", true) && !alarming && alarmOverlay == null && videoBox == null) {
+            val dx = ev.rawX - swipeX
+            val dy = ev.rawY - swipeY
             when (ev.actionMasked) {
                 android.view.MotionEvent.ACTION_DOWN -> {
                     swipeX = ev.rawX
                     swipeY = ev.rawY
                     swipeT = System.currentTimeMillis()
-                    swipeOk = !blocksSwipe(frameView(), ev.rawX, ev.rawY)
+                    swiping = false
+                    swipeOk = pages().size > 1 && !blocksSwipe(frameView(), ev.rawX, ev.rawY)
                 }
-                android.view.MotionEvent.ACTION_UP -> if (swipeOk) {
-                    val dx = ev.rawX - swipeX
-                    val dy = ev.rawY - swipeY
-                    val dt = System.currentTimeMillis() - swipeT
-                    if (Math.abs(dx) > dp(90) && Math.abs(dx) > Math.abs(dy) * 2 && dt < 700) {
+                android.view.MotionEvent.ACTION_POINTER_DOWN -> swipeOk = false
+                android.view.MotionEvent.ACTION_MOVE -> if (swipeOk) {
+                    if (!swiping && Math.abs(dx) > dp(18) && Math.abs(dx) > Math.abs(dy) * 1.4f) {
+                        // ab jetzt gehört die Bewegung dem Seitenwechsel: Kacheln/Listen bekommen ein „Abbrechen“
+                        swiping = true
+                        swipeX = ev.rawX - Math.signum(dx) * dp(1)
                         val cancel = android.view.MotionEvent.obtain(ev).apply { action = android.view.MotionEvent.ACTION_CANCEL }
                         super.dispatchTouchEvent(cancel)
                         cancel.recycle()
-                        stepPage(if (dx < 0) 1 else -1)
+                        swipeView = pageView()
+                    }
+                    if (swiping) {
+                        val w = resources.displayMetrics.widthPixels.toFloat()
+                        val d = ev.rawX - swipeX
+                        swipeView?.translationX = d * 0.6f
+                        swipeView?.alpha = 1f - (Math.abs(d) / w).coerceAtMost(0.6f)
                         return true
                     }
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> if (swiping) {
+                    swiping = false
+                    val v = swipeView
+                    swipeView = null
+                    val d = ev.rawX - swipeX
+                    val dt = System.currentTimeMillis() - swipeT
+                    val fling = Math.abs(d) > dp(40) && dt < 300
+                    if (ev.actionMasked == android.view.MotionEvent.ACTION_UP && (Math.abs(d) > dp(70) || fling)) {
+                        v?.animate()?.cancel()
+                        v?.translationX = 0f
+                        v?.alpha = 1f
+                        stepPage(if (d < 0) 1 else -1)
+                    } else v?.animate()?.translationX(0f)?.alpha(1f)?.setDuration(150)?.start()
+                    return true
                 }
             }
         }
@@ -837,7 +884,7 @@ class MainActivity : ScaledActivity() {
         val p = podPanel
         val m = medPanel
         if (videoBox != null) closeVideo()
-        else if (weatherPage != null) showPage("uhr", -1)
+        else if (weatherPage != null) { }
         else if (m != null && m.visible) m.back()
         else if (p != null && p.visible) p.back() else {
             @Suppress("DEPRECATION")
@@ -1090,7 +1137,7 @@ class MainActivity : ScaledActivity() {
             // Radio-Seite: Radiobereich über den ganzen Bildschirm
             clockPanel.visibility = View.GONE
             radioPanel.layoutParams = if (cfg.orientation == Configuration.ORIENTATION_LANDSCAPE)
-                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 2f)
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
             else LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         } else {
             clockPanel.visibility = View.VISIBLE
@@ -1204,7 +1251,7 @@ class MainActivity : ScaledActivity() {
         row.visibility = View.GONE
         // Querformat: Zahnrad oben in dieser Spalte (überdeckt dann nichts), Hochformat: oben rechts in der Ecke
         (btnGear.parent as? ViewGroup)?.removeView(btnGear)
-        if (land) {
+        if (land || radioPage) {
             btnGear.setPadding(bdp(8), bdp(8), bdp(8), bdp(8))
             side.addView(btnGear, 0, LinearLayout.LayoutParams(size, size).apply { setMargins(0, 0, 0, m * 2) })
         } else {
@@ -2115,7 +2162,7 @@ class MainActivity : ScaledActivity() {
         val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val side = dp(18) + maxOf(dp(40), bdp(40).toFloat())
         val w = (if (land && !radioPage) (dm.widthPixels - dp(24)) / 2.3f - dp(8)
-            else if (land) (dm.widthPixels - dp(24)) * 2f / 3f - dp(10)
+            else if (land) dm.widthPixels - dp(24) - PlayerBar.sideWidth(this) - dp(10)
             else dm.widthPixels - dp(24)) - side
         return (w - radioPanel.paddingLeft - radioPanel.paddingRight).toInt()
     }
