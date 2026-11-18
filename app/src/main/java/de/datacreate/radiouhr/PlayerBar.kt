@@ -32,7 +32,7 @@ class PlayerBar(private val h: PodcastHost, private val side: Boolean) {
     private val barSub: TextView
     private val seek: SeekBar
     private val timesRow: LinearLayout
-    private val tPos: TextView
+    private lateinit var tPos: TextView
     private val tLeft: TextView
     private val ctrRow: LinearLayout
     private val bBack: TextView
