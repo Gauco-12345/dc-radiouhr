@@ -132,7 +132,14 @@ class MainActivity : ScaledActivity() {
 
     private val podHost = object : PodcastHost {
         override fun skin(): Skin = this@MainActivity.skin
-        override fun loadNew(done: (Int) -> Unit) = podcastLoadNow(done)
+        override fun radioNow(): RadioNow? {
+            if (pcMode || videoMode || !wantPlaying || stations.isEmpty()) return null
+            val st = stations[current.coerceIn(0, stations.size - 1)]
+            val t = tvNowPlaying.text.toString().trim()
+            val song = if (t.startsWith("Verbinde") || t.startsWith("Keine Verbindung")) "" else t
+            return RadioNow(song.ifEmpty { st.name }, st.name, icons[st.url])
+        }
+        override fun radioStop() = stopRadio()
         override val activity: Activity get() = this@MainActivity
         override val prefs: SharedPreferences get() = this@MainActivity.prefs
         override fun io(r: () -> Unit) { this@MainActivity.io.execute { r() } }
@@ -238,7 +245,38 @@ class MainActivity : ScaledActivity() {
     private fun refreshPanels() {
         podPanel?.refresh()
         medPanel?.refresh()
+        updateRadioBar()
         updateNotif()
+    }
+
+    // ---- Player-Leiste auf der Radio-Seite (wenn Podcast/MP3 läuft)
+    private var radioBar: PlayerBar? = null
+    private var radioBarSkin = ""
+
+    private fun updateRadioBar() {
+        if (!::root.isInitialized) return
+        val want = radioPage && !night && pcMode && pcEp != null && videoBox == null
+        val fr = frameView() ?: return
+        if (!want) {
+            radioBar?.let { (it.view.parent as? ViewGroup)?.removeView(it.view) }
+            radioBar = null
+            if (root.paddingBottom != dp(12).toInt()) root.setPadding(root.paddingLeft, root.paddingTop, root.paddingRight, dp(12).toInt())
+            return
+        }
+        var b = radioBar
+        if (b == null || radioBarSkin != skin.id) {
+            b?.let { (it.view.parent as? ViewGroup)?.removeView(it.view) }
+            b = PlayerBar(podHost, false)
+            radioBar = b
+            radioBarSkin = skin.id
+            fr.addView(b.view, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+            b.view.addOnLayoutChangeListener { v, _, t, _, bt, _, ot, _, ob ->
+                if (bt - t != ob - ot) root.setPadding(root.paddingLeft, root.paddingTop, root.paddingRight, v.height + dp(6).toInt())
+            }
+            dots?.let { d -> if (d.parent === fr) d.bringToFront() }
+        }
+        b.refresh()
     }
 
     private fun isMedia(p: Podcast.Pod?) = p?.feed?.startsWith("media:") == true
@@ -379,6 +417,7 @@ class MainActivity : ScaledActivity() {
                 target = weatherPage!!.scroll
             }
         }
+        updateRadioBar()
         if (dir != 0) {
             val w = resources.displayMetrics.widthPixels.toFloat()
             target.translationX = dir * w * 0.35f
@@ -479,26 +518,6 @@ class MainActivity : ScaledActivity() {
     }
 
     /** Neue Folgen der Abos herunterladen und Gehörtes aufräumen (stündlich). */
-    /** Knopf „Neue Folgen jetzt laden“: unabhängig von der Automatik-Einstellung. */
-    private fun podcastLoadNow(done: (Int) -> Unit) {
-        val n = prefs.getInt("pcAutoCount", 1).coerceAtLeast(1)
-        val subs = Podcast.subs(prefs)
-        io.execute {
-            var started = 0
-            for (sub in subs) {
-                val res = try { Podcast.feed(this, sub.feed, force = true) } catch (_: Exception) { null } ?: continue
-                val pod = if (res.first.art.isEmpty()) sub else res.first
-                for (ep in res.second.take(n)) {
-                    if (!Podcast.done(prefs, ep) && !Podcast.isDownloaded(this, ep) && !Podcast.progress.containsKey(ep.url)) {
-                        started++
-                        Podcast.download(this, prefs, pod, ep) { main.post { podPanel?.downloadsChanged() } }
-                    }
-                }
-            }
-            main.post { done(started) }
-        }
-    }
-
     private fun podcastAuto(force: Boolean = false) {
         val mode = prefs.getString("pcAuto", "off") ?: "off"
         if (!force && System.currentTimeMillis() - prefs.getLong("pcAutoLast", 0L) < 55 * 60_000L) return
@@ -1841,7 +1860,7 @@ class MainActivity : ScaledActivity() {
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
                 if (pcMode || videoMode) return
                 val t = mediaMetadata.title?.toString()?.trim()
-                if (!t.isNullOrEmpty()) { tvNowPlaying.text = t; updateNotif() }
+                if (!t.isNullOrEmpty()) { tvNowPlaying.text = t; refreshPanels() }
             }
         })
     }
@@ -1891,7 +1910,7 @@ class MainActivity : ScaledActivity() {
 
     private fun updatePlayButton() {
         btnPlay.setImageResource(if (wantPlaying) R.drawable.ic_stop else R.drawable.ic_play)
-        updateNotif()
+        refreshPanels()
     }
 
     private fun showStationName() {
@@ -1901,13 +1920,13 @@ class MainActivity : ScaledActivity() {
             tvStation.text = (if (pcPlaying()) "" else "▶  ") + (if (isMedia(pp)) "♪  " else "🎙  ") + pp.title
             tvNowPlaying.text = pe.title
             buildFavorites()
-            updateNotif()
+            refreshPanels()
             return
         }
         tvStation.text = if (stations.isEmpty()) "Keine Sender – tippe auf ＋"
         else (if (wantPlaying) "" else "▶  ") + stations[current.coerceIn(0, stations.size - 1)].name
         buildFavorites()
-        updateNotif()
+        refreshPanels()
     }
 
     // ================================================================ Favoriten-Kacheln

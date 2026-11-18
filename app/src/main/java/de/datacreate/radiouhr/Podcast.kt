@@ -184,6 +184,25 @@ object Podcast {
         return out
     }
 
+    /** Neueste ungehörte Folgen aller Abos jetzt laden (im Hintergrund). done(Anzahl gestarteter Downloads). */
+    fun loadNew(ctx: Context, p: SharedPreferences, onFile: () -> Unit, finished: (Int) -> Unit) {
+        Thread {
+            val n = p.getInt("pcAutoCount", 1).coerceAtLeast(1)
+            var started = 0
+            for (sub in subs(p)) {
+                val res = try { feed(ctx, sub.feed, force = true) } catch (_: Exception) { null } ?: continue
+                val pod = if (res.first.art.isEmpty()) sub else res.first
+                for (ep in res.second.take(n)) {
+                    if (!done(p, ep) && !isDownloaded(ctx, ep) && !progress.containsKey(ep.url)) {
+                        started++
+                        download(ctx, p, pod, ep) { onFile() }
+                    }
+                }
+            }
+            finished(started)
+        }.start()
+    }
+
     /** Einzelne Folgen im Apple-Verzeichnis suchen (Titel/Beschreibung), z. B. „Toskana“. */
     fun searchEpisodes(term: String): List<Pair<Pod, Ep>> {
         val url = "https://itunes.apple.com/search?media=podcast&entity=podcastEpisode&country=DE&limit=50&term=" + URLEncoder.encode(term, "UTF-8")

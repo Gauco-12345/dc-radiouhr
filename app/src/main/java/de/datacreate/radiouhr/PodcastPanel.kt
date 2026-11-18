@@ -28,7 +28,8 @@ import java.util.Locale
 /** Schnittstelle zur Hauptseite (Player, Hintergrund-Threads, Bilder). */
 interface PodcastHost {
     fun skin(): Skin
-    fun loadNew(done: (Int) -> Unit)
+    fun radioNow(): RadioNow?
+    fun radioStop()
     val activity: Activity
     val prefs: SharedPreferences
     fun io(r: () -> Unit)
@@ -63,20 +64,8 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     private lateinit var title: TextView
     private lateinit var list: LinearLayout
     private lateinit var scroll: ScrollView
-    private lateinit var bar: LinearLayout
-    private lateinit var barTitle: TextView
-    private lateinit var barSub: TextView
-    private lateinit var barArt: ImageView
-    private lateinit var seek: SeekBar
-    private lateinit var tPos: TextView
-    private lateinit var tLeft: TextView
-    private lateinit var bPlay: TextView
-    private lateinit var bSpeed: TextView
-    private lateinit var barText: LinearLayout
-    private lateinit var ctrRow: LinearLayout
-    private lateinit var timesRow: LinearLayout
+    private var pbar: PlayerBar? = null
     private var land = false
-    private var dragging = false
     private var screen = "home"
     private var curPod: Podcast.Pod? = null
     private var lastQuery = ""
@@ -140,77 +129,10 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         scroll.addView(list)
         val body = LinearLayout(a).apply { orientation = if (land) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL }
 
-        // Player unten
-        bar = LinearLayout(a).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(L.bar)
-            setPadding(dp(14), dp(10), dp(14), dp(20))
-        }
-        val top = LinearLayout(a).apply {
-            orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-            gravity = if (land) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL
-        }
-        barArt = ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-        if (land) top.addView(barArt, LinearLayout.LayoutParams(dp(150), dp(150)).apply { bottomMargin = dp(12) })
-        else top.addView(barArt, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(10) })
-        val tt = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
-        barText = tt
-        barTitle = TextView(a).apply { textSize = 15f; setTextColor(fg); maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
-        barSub = TextView(a).apply { textSize = 12f; setTextColor(sub); setSingleLine(true); ellipsize = TextUtils.TruncateAt.END }
-        tt.addView(barTitle)
-        tt.addView(barSub)
-        if (land) {
-            barTitle.gravity = Gravity.CENTER
-            barSub.gravity = Gravity.CENTER
-            barTitle.maxLines = 3
-            top.addView(tt, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        } else top.addView(tt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(top)
-        seek = SeekBar(a).apply {
-            progressTintList = android.content.res.ColorStateList.valueOf(L.accent)
-            thumbTintList = android.content.res.ColorStateList.valueOf(L.accent)
-            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(L.sub)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(sb: SeekBar?, v: Int, fromUser: Boolean) {
-                    if (fromUser) tPos.text = Podcast.fmtTime(v * 1000L)
-                }
-                override fun onStartTrackingTouch(sb: SeekBar?) { dragging = true }
-                override fun onStopTrackingTouch(sb: SeekBar?) {
-                    dragging = false
-                    h.seekTo((sb?.progress ?: 0) * 1000L)
-                }
-            })
-        }
-        bar.addView(seek, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(36)).apply { topMargin = dp(6) })
-        val times = LinearLayout(a).apply { orientation = LinearLayout.HORIZONTAL }
-        tPos = TextView(a).apply { textSize = 12f; setTextColor(sub) }
-        tLeft = TextView(a).apply { textSize = 12f; setTextColor(sub); gravity = Gravity.END }
-        times.addView(tPos, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        times.addView(tLeft, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(times)
-        timesRow = times
-        val ctr = LinearLayout(a).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, dp(6), 0, 0)
-        }
-        ctr.addView(round("−15") { h.seekBy(-15_000) })
-        bPlay = round("▶", big = true) { h.toggle(); refresh() }
-        ctr.addView(bPlay)
-        ctr.addView(round("+30") { h.seekBy(30_000) })
-        bSpeed = round("1,0×") {
-            val steps = floatArrayOf(0.8f, 1.0f, 1.2f, 1.5f, 1.75f, 2.0f)
-            val cur = h.speed()
-            val next = steps.firstOrNull { it > cur + 0.01f } ?: steps[0]
-            h.setSpeed(next)
-            refresh()
-        }
-        ctr.addView(bSpeed)
-        bar.addView(ctr)
-        ctrRow = ctr
-        bar.addOnLayoutChangeListener { _, l, t, rr, b, ol, ot, orr, ob ->
-            if (rr - l != orr - ol || b - t != ob - ot) bar.post { fitBar() }
-        }
+        // Player unten (gemeinsame Leiste)
+        val pb = PlayerBar(h, land)
+        pbar = pb
+        val bar = pb.view
         if (land) {
             // links 1/3 Steuerung, rechts 2/3 Liste
             bar.gravity = Gravity.CENTER
@@ -229,7 +151,6 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             if (code == KeyEvent.KEYCODE_BACK && e.action == KeyEvent.ACTION_UP) { back(); true } else false
         }
         root = r
-        barKey = ""
         val c = h.current()
         if (media) {
             keepState = false
@@ -242,7 +163,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                 "results" -> search(lastQuery)
                 else -> showHome()
             }
-        } else if (c != null && screen == "home") showEpisodes(c.first) else showHome()
+        } else if (c != null && screen == "home" && !c.first.feed.startsWith("media:")) showEpisodes(c.first) else showHome()
         refresh()
     }
 
@@ -279,20 +200,6 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         setTextColor(fg)
         gravity = Gravity.CENTER
         setPadding(dp(12), dp(6), dp(12), dp(6))
-        setOnClickListener { onClick() }
-    }
-
-    private fun round(t: String, big: Boolean = false, onClick: () -> Unit) = TextView(a).apply {
-        text = t
-        textSize = if (big) 24f else 15f
-        setTextColor(if (big) L.onAccent else fg)
-        gravity = Gravity.CENTER
-        background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(if (big) h.accent() else col("#2A3138"))
-        }
-        val s = if (big) dp(64) else dp(52)
-        layoutParams = LinearLayout.LayoutParams(s, s).apply { setMargins(dp(6), 0, dp(6), 0) }
         setOnClickListener { onClick() }
     }
 
@@ -365,23 +272,6 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         scroll.scrollTo(0, 0)
         val subs = Podcast.subs(h.prefs)
         val dls = Podcast.downloads(a, h.prefs)
-        if (subs.isNotEmpty()) {
-            val busy = Podcast.progress.size
-            list.addView(btn(if (busy > 0) "⬇  Lädt $busy Folge(n) …  · nochmal prüfen" else "⬇  Neue Folgen jetzt herunterladen", 15f) {
-                Toast.makeText(a, "Suche neue Folgen …", Toast.LENGTH_SHORT).show()
-                h.loadNew { n ->
-                    Toast.makeText(a, if (n == 0) "Keine neuen Folgen – alles schon da" else "$n neue Folge(n) werden heruntergeladen", Toast.LENGTH_LONG).show()
-                    if (root != null && screen == "home") showHome()
-                }
-            }.apply {
-                setTextColor(L.onAccent)
-                gravity = Gravity.CENTER
-                setPadding(dp(12), dp(12), dp(12), dp(12))
-                background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(h.accent()) }
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                setMargins(dp(4), dp(6), dp(4), dp(6))
-            })
-        }
         if (dls.isNotEmpty()) {
             list.addView(TextView(a).apply {
                 text = "HERUNTERGELADEN  (lange drücken = löschen)"
@@ -405,19 +295,13 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             return
         }
         list.addView(TextView(a).apply {
-            text = "MEINE ABOS  (lange drücken = abbestellen)"
+            text = "MEINE ABOS"
             textSize = 12f
             setTextColor(h.accent())
             setPadding(dp(6), dp(8), 0, dp(4))
         })
         for (p in subs) {
-            row(p.art, p.title, p.author, onClick = { showEpisodes(p) }, onLong = {
-                android.app.AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                    .setMessage("„${p.title}“ abbestellen?")
-                    .setPositiveButton("Abbestellen") { _, _ -> Podcast.toggleSub(h.prefs, p); showHome() }
-                    .setNegativeButton("Abbrechen", null)
-                    .show()
-            })
+            row(p.art, p.title, p.author, onClick = { showEpisodes(p) })
         }
     }
 
@@ -916,67 +800,14 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
 
     // ------------------------------------------------------------ Player-Leiste
 
-    /** Tasten und Bild so verkleinern, dass im schmalen/niedrigen Bereich nichts abgeschnitten wird. */
-    private fun fitBar() {
-        if (root == null || bar.width == 0) return
-        val w = bar.width - bar.paddingLeft - bar.paddingRight
-        val m = dp(6)
-        // 3 kleine + 1 große Taste (1,25×) + 8 Ränder
-        val small = ((w - 8 * m) / 4.25f).toInt().coerceIn(dp(34), dp(52))
-        val big = (small * 1.25f).toInt()
-        for (n in 0 until ctrRow.childCount) {
-            val v = ctrRow.getChildAt(n) as TextView
-            val s = if (v === bPlay) big else small
-            val lp = v.layoutParams as LinearLayout.LayoutParams
-            if (lp.width != s) {
-                lp.width = s; lp.height = s
-                v.layoutParams = lp
-                v.textSize = (if (v === bPlay) 24f else 15f) * s / (if (v === bPlay) dp(64) else dp(52)).toFloat()
-            }
-        }
-        if (!land) return
-        // Querformat: Coverbild nur so groß, wie Platz ist
-        val inner = bar.height - bar.paddingTop - bar.paddingBottom
-        val need = barText.height + dp(42) + timesRow.height + big + dp(6) + dp(12)
-        val free = inner - need
-        val lp = barArt.layoutParams as LinearLayout.LayoutParams
-        val s = free.coerceAtMost(dp(150))
-        val want = if (s < dp(44)) 0 else s
-        if (lp.width != want) {
-            lp.width = want; lp.height = want
-            barArt.visibility = if (want == 0) View.GONE else View.VISIBLE
-            barArt.layoutParams = lp
-        }
-    }
-
     /** Ein Download ist fertig: Startseite aktualisieren. */
     fun downloadsChanged() {
         if (root != null && screen == "home") showHome()
     }
 
-    private var barKey = ""
-
     fun refresh() {
         if (root == null) return
         if (Podcast.progress.isNotEmpty()) updateStatus()
-        val c = h.current()
-        bar.visibility = if (c == null) View.GONE else View.VISIBLE
-        if (c == null) return
-        if (barKey != c.second.url) {
-            barKey = c.second.url
-            barTitle.text = c.second.title
-            barSub.text = c.first.title
-            art(barArt, c.second.art.ifEmpty { c.first.art })
-        }
-        val dur = h.duration()
-        val pos = h.position()
-        if (!dragging) {
-            seek.max = (dur / 1000).toInt().coerceAtLeast(1)
-            seek.progress = (pos / 1000).toInt()
-            tPos.text = Podcast.fmtTime(pos)
-        }
-        tLeft.text = if (dur > 0) "−" + Podcast.fmtTime(dur - pos) else ""
-        bPlay.text = if (h.isPlaying()) "❚❚" else "▶"
-        bSpeed.text = String.format(Locale.GERMANY, "%.1f×", h.speed()).replace(".0×", ",0×")
+        pbar?.refresh()
     }
 }

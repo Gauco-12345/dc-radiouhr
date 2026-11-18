@@ -604,6 +604,14 @@ class SettingsActivity : ScaledActivity() {
             prefs.edit().putInt("pcAutoCount", cnt[it]).apply()
         }
         check(c, "Gehörte Downloads automatisch löschen", "pcAutoDelete", false)
+        button(c, "Neue Folgen jetzt herunterladen", "prüft sofort alle Abos – auch wenn die Automatik aus ist") {
+            Toast.makeText(this, "Suche neue Folgen …", Toast.LENGTH_SHORT).show()
+            val app = applicationContext
+            val h = android.os.Handler(mainLooper)
+            Podcast.loadNew(app, prefs, {}) { n ->
+                h.post { Toast.makeText(app, if (n == 0) "Keine neuen Folgen – alles schon da" else "$n neue Folge(n) werden heruntergeladen", Toast.LENGTH_LONG).show() }
+            }
+        }
         c.addView(small("Die App schaut stündlich nach neuen Folgen deiner Abos. Bereits gehörte Folgen werden nicht geladen. Viele Folgen brauchen viel Speicher – eine Folge hat meist 20–80 MB."))
         }
         if (t("Radio")) {
