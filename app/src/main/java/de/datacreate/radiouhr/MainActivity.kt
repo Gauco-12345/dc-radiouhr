@@ -122,6 +122,107 @@ class MainActivity : ScaledActivity() {
     private val stations = mutableListOf<Station>()
     private var current = 0
     private var wantPlaying = false
+
+    // ---- Podcasts
+    private var pcMode = false
+    private var pcPod: Podcast.Pod? = null
+    private var pcEp: Podcast.Ep? = null
+    private lateinit var btnPod: ImageView
+    private var podPanel: PodcastPanel? = null
+
+    private val podHost = object : PodcastHost {
+        override val activity: Activity get() = this@MainActivity
+        override val prefs: SharedPreferences get() = this@MainActivity.prefs
+        override fun io(r: () -> Unit) { this@MainActivity.io.execute { r() } }
+        override fun ui(r: () -> Unit) { main.post { r() } }
+        override fun bitmap(url: String): Bitmap? = loadBitmap(url)
+        override fun play(pod: Podcast.Pod, ep: Podcast.Ep) = playEpisode(pod, ep)
+        override fun toggle() = pcToggle()
+        override fun seekBy(ms: Long) {
+            if (!pcMode) return
+            val d = duration()
+            player.seekTo((player.currentPosition + ms).coerceIn(0L, if (d > 0) d else Long.MAX_VALUE))
+            savePcPos()
+        }
+        override fun seekTo(ms: Long) {
+            if (!pcMode) return
+            player.seekTo(ms.coerceAtLeast(0L))
+            savePcPos()
+        }
+        override fun position(): Long = if (pcMode && player.playbackState != Player.STATE_IDLE) player.currentPosition
+            else pcEp?.let { Podcast.pos(this@MainActivity.prefs, it) } ?: 0L
+        override fun duration(): Long {
+            val d = if (pcMode && player.playbackState != Player.STATE_IDLE) player.duration else C.TIME_UNSET
+            return if (d != C.TIME_UNSET && d > 0) d else (pcEp?.durationSec ?: 0L) * 1000L
+        }
+        override fun isPlaying(): Boolean = pcPlaying()
+        override fun current(): Pair<Podcast.Pod, Podcast.Ep>? {
+            val p = pcPod
+            val e = pcEp
+            return if (p != null && e != null) p to e else null
+        }
+        override fun speed(): Float = this@MainActivity.prefs.getFloat("pcSpeed", 1f)
+        override fun setSpeed(f: Float) {
+            this@MainActivity.prefs.edit().putFloat("pcSpeed", f).apply()
+            if (pcMode) player.setPlaybackSpeed(f)
+        }
+        override fun accent(): Int = skin.accent
+    }
+
+    private fun pcPlaying() = pcMode && player.playWhenReady &&
+        player.playbackState != Player.STATE_ENDED && player.playbackState != Player.STATE_IDLE
+
+    private fun anyPlaying() = wantPlaying || pcPlaying()
+
+    private fun savePcPos() {
+        val ep = pcEp ?: return
+        if (pcMode && player.playbackState != Player.STATE_IDLE && player.currentPosition > 0) Podcast.setPos(prefs, ep, player.currentPosition)
+    }
+
+    private fun loadEpisode(start: Boolean) {
+        val ep = pcEp ?: return
+        wantPlaying = false
+        main.removeCallbacks(retry)
+        pcMode = true
+        prefs.edit().putBoolean("pcMode", true).apply()
+        player.setMediaItem(MediaItem.fromUri(ep.url))
+        player.prepare()
+        val pos = Podcast.pos(prefs, ep)
+        if (pos > 0 && !Podcast.done(prefs, ep)) player.seekTo(pos)
+        player.setPlaybackSpeed(prefs.getFloat("pcSpeed", 1f))
+        player.volume = 1f
+        if (start) player.play()
+        showStationName()
+    }
+
+    private fun playEpisode(pod: Podcast.Pod, ep: Podcast.Ep) {
+        savePcPos()
+        pcPod = pod
+        pcEp = ep
+        Podcast.saveLast(prefs, pod, ep)
+        if (Podcast.done(prefs, ep)) Podcast.setDone(prefs, ep, false)
+        loadEpisode(true)
+    }
+
+    private fun pcToggle() {
+        if (pcEp == null) return
+        if (pcPlaying()) {
+            player.pause()
+            savePcPos()
+        } else if (!pcMode || player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {
+            loadEpisode(true)
+        } else {
+            player.play()
+        }
+        showStationName()
+        podPanel?.refresh()
+    }
+
+    private fun openPodcasts() {
+        val panel = podPanel ?: PodcastPanel(podHost).also { podPanel = it }
+        panel.show(findViewById(R.id.frame))
+    }
+
     private var night = false
     private var lastAutoNight: Boolean? = null
     private var lastMinute = -1
@@ -184,11 +285,23 @@ class MainActivity : ScaledActivity() {
 
         setupPlayer()
         loadStations()
+        Podcast.last(prefs)?.let { (p, e) ->
+            pcPod = p
+            pcEp = e
+            pcMode = prefs.getBoolean("pcMode", false)
+        }
+        btnPod = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            isClickable = true
+            setOnClickListener { openPodcasts() }
+        }
 
         btnPlay.setOnClickListener { if (wantPlaying) stopRadio() else playCurrent() }
-        tvStation.setOnClickListener { if (wantPlaying) stopRadio() else playCurrent() }
+        tvStation.setOnClickListener {
+            if (pcMode && pcEp != null) pcToggle() else if (wantPlaying) stopRadio() else playCurrent()
+        }
         tvStation.setOnLongClickListener {
-            showStations()
+            if (pcMode && pcEp != null) openPodcasts() else showStations()
             true
         }
         volSlider = findViewById(R.id.volSlider)
@@ -252,6 +365,7 @@ class MainActivity : ScaledActivity() {
         super.onPause()
         main.removeCallbacks(tick)
         main.removeCallbacks(weatherLoop)
+        savePcPos()
         // Radio läuft bewusst weiter
     }
 
@@ -279,6 +393,15 @@ class MainActivity : ScaledActivity() {
             }
             .setNegativeButton("Löschen") { _, _ -> prefs.edit().remove("lastCrash").apply() }
             .show()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        val p = podPanel
+        if (p != null && p.visible) p.back() else {
+            @Suppress("DEPRECATION")
+            super.onBackPressed()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -606,6 +729,9 @@ class MainActivity : ScaledActivity() {
         btnAdd.setPadding(pad, pad, pad, pad)
         side.addView(btnTimer, 0, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
         side.addView(btnAdd, 1, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
+        (btnPod.parent as? ViewGroup)?.removeView(btnPod)
+        btnPod.setPadding(pad, pad, pad, pad)
+        side.addView(btnPod, 2, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
         volSlider.layoutParams = LinearLayout.LayoutParams(maxOf(dp(40).toInt(), size), 0, 1f).apply { topMargin = m }
         findViewById<View>(R.id.radioMain).layoutParams = LinearLayout.LayoutParams(0,
             if (land) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -657,6 +783,11 @@ class MainActivity : ScaledActivity() {
 
             syncKnob()
 
+            if (pcMode) {
+                podPanel?.let { if (it.visible) it.refresh() }
+                if (cal.get(Calendar.SECOND) % 5 == 0 && player.isPlaying) savePcPos()
+            }
+
             if (sleepAt > 0) {
                 val left = sleepAt - System.currentTimeMillis()
                 if (left <= 0) {
@@ -693,7 +824,7 @@ class MainActivity : ScaledActivity() {
             return
         }
         // Läuft das Radio, bleibt die normale Ansicht – der Nachtmodus kommt erst, wenn es aus ist
-        val should = NightZones.isNight(prefs) && !wantPlaying
+        val should = NightZones.isNight(prefs) && !anyPlaying()
         if (lastAutoNight != should) {
             lastAutoNight = should
             if (!(should && alarming)) setNight(should)
@@ -702,7 +833,7 @@ class MainActivity : ScaledActivity() {
 
     private fun isNightHour(): Boolean = NightZones.isNight(prefs)
 
-    private val backToNight = Runnable { if (!night && !alarming && !wantPlaying && isNightHour()) setNight(true) }
+    private val backToNight = Runnable { if (!night && !alarming && !anyPlaying() && isNightHour()) setNight(true) }
 
     private fun setNight(on: Boolean) {
         night = on
@@ -838,6 +969,8 @@ class MainActivity : ScaledActivity() {
         btnNight.background = btnBg()
         btnSettings.background = btnBg()
         btnAdd.background = btnBg()
+        btnPod.background = btnBg()
+        btnPod.setImageDrawable(MicDrawable(if (k.btn == BtnStyle.ROUND) col("#2A2A2A") else k.iconTint))
         btnAdd.setColorFilter(if (k.btn == BtnStyle.ROUND) col("#2A2A2A") else k.iconTint)
         val tint = if (k.btn == BtnStyle.ROUND) col("#2A2A2A") else k.iconTint
         btnPlay.setColorFilter(if (k.btn == BtnStyle.ROUND) Color.WHITE else tint)
@@ -1227,16 +1360,32 @@ class MainActivity : ScaledActivity() {
         player.setWakeMode(C.WAKE_MODE_NETWORK)
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (pcMode) {
+                    showStationName()
+                    podPanel?.refresh()
+                    return
+                }
                 if (isPlaying && tvNowPlaying.text.startsWith("Verbinde")) tvNowPlaying.text = ""
                 updatePlayButton()
             }
 
             override fun onPlaybackStateChanged(state: Int) {
+                if (pcMode) {
+                    if (state == Player.STATE_ENDED) pcEp?.let { Podcast.setDone(prefs, it, true) }
+                    showStationName()
+                    podPanel?.refresh()
+                    return
+                }
                 if (state == Player.STATE_BUFFERING && wantPlaying) tvNowPlaying.text = "Verbinde …"
                 if (state == Player.STATE_ENDED && wantPlaying) main.postDelayed(retry, 3000)
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                if (pcMode) {
+                    tvNowPlaying.text = "Folge kann nicht abgespielt werden"
+                    Toast.makeText(this@MainActivity, "Folge kann nicht abgespielt werden", Toast.LENGTH_LONG).show()
+                    return
+                }
                 if (wantPlaying) {
                     tvNowPlaying.text = "Keine Verbindung – neuer Versuch …"
                     main.removeCallbacks(retry)
@@ -1245,6 +1394,7 @@ class MainActivity : ScaledActivity() {
             }
 
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+                if (pcMode) return
                 val t = mediaMetadata.title?.toString()?.trim()
                 if (!t.isNullOrEmpty()) tvNowPlaying.text = t
             }
@@ -1258,6 +1408,12 @@ class MainActivity : ScaledActivity() {
         }
         current = current.coerceIn(0, stations.size - 1)
         val s = stations[current]
+        if (pcMode) {
+            savePcPos()
+            pcMode = false
+            prefs.edit().putBoolean("pcMode", false).apply()
+            player.setPlaybackSpeed(1f)
+        }
         wantPlaying = true
         main.removeCallbacks(retry)
         player.setMediaItem(MediaItem.fromUri(s.url))
@@ -1270,6 +1426,7 @@ class MainActivity : ScaledActivity() {
     }
 
     private fun stopRadio() {
+        savePcPos()
         wantPlaying = false
         main.removeCallbacks(retry)
         player.stop()
@@ -1292,6 +1449,14 @@ class MainActivity : ScaledActivity() {
     }
 
     private fun showStationName() {
+        val pe = pcEp
+        val pp = pcPod
+        if (pcMode && pe != null && pp != null) {
+            tvStation.text = (if (pcPlaying()) "" else "▶  ") + "🎙  " + pp.title
+            tvNowPlaying.text = pe.title
+            buildFavorites()
+            return
+        }
         tvStation.text = if (stations.isEmpty()) "Keine Sender – tippe auf ＋"
         else (if (wantPlaying) "" else "▶  ") + stations[current.coerceIn(0, stations.size - 1)].name
         buildFavorites()
@@ -1522,6 +1687,54 @@ class MainActivity : ScaledActivity() {
         favGrid.removeAllViews()
         val active = current.coerceIn(0, maxOf(0, stations.size - 1))
         dialView.setStations(stations.map { it.name }, active, wantPlaying)
+
+        // Listenansicht: Logo vorne, Name dahinter
+        if (skin.presets != Presets.NONE && prefs.getString("favStyle", "auto") == "list") {
+            val rowH = fdp(52)
+            stations.forEachIndexed { i, s ->
+                val on = i == active
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    val p = dp(6).toInt()
+                    setPadding(p, p / 2, dp(10).toInt(), p / 2)
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(1) * minOf(skin.corner, 14f)
+                        setColor(if (on && wantPlaying) Color.argb(70, Color.red(skin.accent), Color.green(skin.accent), Color.blue(skin.accent))
+                        else Color.argb(if (on) 40 else 18, Color.red(skin.fg), Color.green(skin.fg), Color.blue(skin.fg)))
+                    }
+                    setOnClickListener { stationClick(i) }
+                    setOnLongClickListener {
+                        confirmRemove(i)
+                        true
+                    }
+                }
+                val logo = fdp(40)
+                row.addView(logoView(s, logo), LinearLayout.LayoutParams(logo, logo).apply { rightMargin = dp(10).toInt() })
+                row.addView(TextView(this).apply {
+                    text = s.name
+                    textSize = fsp(16f)
+                    setTextColor(skin.fg)
+                    typeface = Typeface.create(skin.textFamily, if (on) Typeface.BOLD else Typeface.NORMAL)
+                    setSingleLine(true)
+                    ellipsize = TextUtils.TruncateAt.END
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                if (on && wantPlaying) row.addView(TextView(this).apply {
+                    text = "♪"
+                    textSize = fsp(18f)
+                    setTextColor(skin.accent)
+                })
+                favGrid.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, rowH).apply {
+                    setMargins(0, dp(2).toInt(), 0, dp(2).toInt())
+                })
+            }
+            showGrid(true, if (stations.size > 3) 3 * (rowH + dp(4).toInt()) else 0)
+            findViewById<View>(R.id.favGridScroll).post {
+                val child = favGrid.getChildAt(active) ?: return@post
+                (findViewById<View>(R.id.favGridScroll) as android.widget.ScrollView).smoothScrollTo(0, maxOf(0, child.top - rowH))
+            }
+            return
+        }
 
         when (skin.presets) {
             Presets.NONE -> return

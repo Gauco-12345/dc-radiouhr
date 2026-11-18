@@ -307,6 +307,10 @@ class SettingsActivity : ScaledActivity() {
             main.post { recreate() }
         }
         c.addView(small("„automatisch“ passt alles an die Bildschirmgröße an (Handy, 8-Zoll-Tablet …). Mit % feiner einstellen."))
+        val favStyles = listOf("auto", "list")
+        spinner(c, "Senderleiste", listOf("Kacheln (wie Design)", "Liste: Logo + Name"), maxOf(0, favStyles.indexOf(prefs.getString("favStyle", "auto")))) {
+            prefs.edit().putString("favStyle", favStyles[it]).apply()
+        }
         val sizes = listOf(60, 70, 80, 90, 100, 115, 130, 150, 175, 200)
         spinner(c, "Senderkacheln", sizes.map { "$it %" }, maxOf(0, sizes.indexOf(prefs.getInt("favScale", 100)))) {
             prefs.edit().putInt("favScale", sizes[it]).apply()

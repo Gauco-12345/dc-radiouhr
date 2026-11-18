@@ -581,3 +581,28 @@ class GearDrawable(private val color: Int) : BaseDrawable() {
         c.drawPath(path, p)
     }
 }
+
+/** Mikrofon-Symbol (Podcasts), gezeichnet. */
+class MicDrawable(private val color: Int) : BaseDrawable() {
+    override fun draw(c: Canvas) {
+        val b = RectF(bounds)
+        val s = min(b.width(), b.height())
+        if (s <= 0f) return
+        val cx = b.centerX()
+        val top = b.centerY() - s * 0.45f
+        p.shader = null
+        p.color = color
+        p.style = Paint.Style.FILL
+        val cw = s * 0.34f
+        c.drawRoundRect(RectF(cx - cw / 2, top, cx + cw / 2, top + s * 0.56f), cw / 2, cw / 2, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = s * 0.08f
+        p.strokeCap = Paint.Cap.ROUND
+        val ar = s * 0.3f
+        val acy = top + s * 0.36f
+        c.drawArc(RectF(cx - ar, acy - ar, cx + ar, acy + ar), 0f, 180f, false, p)
+        c.drawLine(cx, acy + ar, cx, top + s * 0.86f, p)
+        c.drawLine(cx - s * 0.18f, top + s * 0.9f, cx + s * 0.18f, top + s * 0.9f, p)
+        p.style = Paint.Style.FILL
+    }
+}
