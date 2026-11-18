@@ -34,6 +34,7 @@ import java.util.concurrent.Executors
 class SettingsActivity : ScaledActivity() {
 
     private lateinit var prefs: SharedPreferences
+    private var dlRunning = false
     private lateinit var list: LinearLayout
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
@@ -604,14 +605,48 @@ class SettingsActivity : ScaledActivity() {
             prefs.edit().putInt("pcAutoCount", cnt[it]).apply()
         }
         check(c, "Gehörte Downloads automatisch löschen", "pcAutoDelete", false)
+        val dlState = small("")
+        dlState.setTextColor(col("#FF8A3D"))
+        dlState.visibility = View.GONE
         button(c, "Neue Folgen jetzt herunterladen", "prüft sofort alle Abos – auch wenn die Automatik aus ist") {
-            Toast.makeText(this, "Suche neue Folgen …", Toast.LENGTH_SHORT).show()
-            val app = applicationContext
+            if (dlRunning) return@button
+            if (Podcast.subs(prefs).isEmpty()) {
+                dlState.visibility = View.VISIBLE
+                dlState.text = "Du hast noch keine Podcasts abonniert."
+                return@button
+            }
+            dlRunning = true
+            dlState.visibility = View.VISIBLE
+            dlState.text = "Prüfe Abos …"
             val h = android.os.Handler(mainLooper)
-            Podcast.loadNew(app, prefs, {}) { n ->
-                h.post { Toast.makeText(app, if (n == 0) "Keine neuen Folgen – alles schon da" else "$n neue Folge(n) werden heruntergeladen", Toast.LENGTH_LONG).show() }
+            Podcast.loadNew(applicationContext, prefs, { k, n ->
+                h.post { dlState.text = "Prüfe Abo $k von $n …" }
+            }) { urls, errors ->
+                h.post {
+                    val err = if (errors > 0) "\n$errors Abo(s) gerade nicht erreichbar." else ""
+                    if (urls.isEmpty()) {
+                        dlRunning = false
+                        dlState.text = "Keine neuen Folgen – alles schon da.$err"
+                        return@post
+                    }
+                    val tick = object : Runnable {
+                        override fun run() {
+                            val open = urls.filter { Podcast.progress.containsKey(it) }
+                            if (open.isEmpty()) {
+                                dlRunning = false
+                                dlState.text = "Fertig: ${urls.size} Folge(n) geladen – zu finden auf der Podcast-Seite unter „Heruntergeladen“.$err"
+                                return
+                            }
+                            val pct = open.map { Podcast.progress[it] ?: 0 }.average().toInt()
+                            dlState.text = "Lade ${urls.size - open.size + 1} von ${urls.size} … ($pct %)$err"
+                            h.postDelayed(this, 1000)
+                        }
+                    }
+                    tick.run()
+                }
             }
         }
+        c.addView(dlState)
         c.addView(small("Die App schaut stündlich nach neuen Folgen deiner Abos. Bereits gehörte Folgen werden nicht geladen. Viele Folgen brauchen viel Speicher – eine Folge hat meist 20–80 MB."))
         }
         if (t("Radio")) {

@@ -28,8 +28,10 @@ import java.util.Locale
 /** Schnittstelle zur Hauptseite (Player, Hintergrund-Threads, Bilder). */
 interface PodcastHost {
     fun skin(): Skin
-    fun radioNow(): RadioNow?
+    /** Laufendes Radio; idle = auch gestoppten Sender liefern (nicht im Podcast-Modus). */
+    fun radioNow(idle: Boolean = false): RadioNow?
     fun radioStop()
+    fun radioPlay()
     val activity: Activity
     val prefs: SharedPreferences
     fun io(r: () -> Unit)

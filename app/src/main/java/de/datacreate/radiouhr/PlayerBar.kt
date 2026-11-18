@@ -13,13 +13,13 @@ import android.widget.TextView
 import java.util.Locale
 
 /** Was im Radio gerade läuft (für die gemeinsame Player-Leiste). */
-class RadioNow(val title: String, val station: String, val art: Bitmap?)
+class RadioNow(val title: String, val station: String, val art: Bitmap?, val playing: Boolean = true)
 
 /**
  * Gemeinsame Player-Leiste für Podcast, Mediathek und Radio-Seite.
  * side = true: Querformat-Spalte (großes Bild oben), sonst flache Leiste unten.
  */
-class PlayerBar(private val h: PodcastHost, private val side: Boolean) {
+class PlayerBar(private val h: PodcastHost, private val side: Boolean, private val idleRadio: Boolean = false) {
     private val a = h.activity
     private val d = a.resources.displayMetrics.density
     private fun dp(v: Int) = (v * d).toInt()
@@ -42,6 +42,7 @@ class PlayerBar(private val h: PodcastHost, private val side: Boolean) {
     private var dragging = false
     private var key = ""
     private var radio = false
+    private var radioPlaying = false
 
     init {
         view = LinearLayout(a).apply {
@@ -98,7 +99,7 @@ class PlayerBar(private val h: PodcastHost, private val side: Boolean) {
         }
         bBack = round("−15") { h.seekBy(-15_000) }
         bPlay = round("▶", big = true) {
-            if (radio) h.radioStop() else h.toggle()
+            if (radio) { if (radioPlaying) h.radioStop() else h.radioPlay() } else h.toggle()
             refresh()
         }
         bFwd = round("+30") { h.seekBy(30_000) }
@@ -173,7 +174,7 @@ class PlayerBar(private val h: PodcastHost, private val side: Boolean) {
 
     /** Aktualisieren; liefert false, wenn nichts läuft (Leiste ausgeblendet). */
     fun refresh(): Boolean {
-        val r = h.radioNow()
+        val r = h.radioNow(idleRadio)
         val c = if (r == null) h.current() else null
         if (r == null && c == null) {
             view.visibility = View.GONE
@@ -189,14 +190,15 @@ class PlayerBar(private val h: PodcastHost, private val side: Boolean) {
             view.post { fit() }
         }
         if (r != null) {
-            val k = "radio|" + r.station + "|" + r.title
+            val k = "radio|" + r.station + "|" + r.title + "|" + r.playing
             if (k != key) {
                 key = k
                 barTitle.text = r.title
-                barSub.text = if (r.title == r.station) "Radio" else r.station
+                barSub.text = if (!r.playing) "Radio · angehalten" else if (r.title == r.station) "Radio" else r.station
                 setArt("", r.art)
             }
-            bPlay.text = "■"
+            radioPlaying = r.playing
+            bPlay.text = if (r.playing) "■" else "▶"
             return true
         }
         val (pod, ep) = c!!

@@ -184,22 +184,29 @@ object Podcast {
         return out
     }
 
-    /** Neueste ungehörte Folgen aller Abos jetzt laden (im Hintergrund). done(Anzahl gestarteter Downloads). */
-    fun loadNew(ctx: Context, p: SharedPreferences, onFile: () -> Unit, finished: (Int) -> Unit) {
+    /**
+     * Neueste ungehörte Folgen aller Abos jetzt laden (im Hintergrund).
+     * step(i, n) beim Prüfen der Abos, finished(URLs der gestarteten Downloads, Fehlerzahl).
+     */
+    fun loadNew(ctx: Context, p: SharedPreferences, step: (Int, Int) -> Unit, finished: (List<String>, Int) -> Unit) {
         Thread {
             val n = p.getInt("pcAutoCount", 1).coerceAtLeast(1)
-            var started = 0
-            for (sub in subs(p)) {
-                val res = try { feed(ctx, sub.feed, force = true) } catch (_: Exception) { null } ?: continue
+            val started = ArrayList<String>()
+            var errors = 0
+            val all = subs(p)
+            for ((k, sub) in all.withIndex()) {
+                step(k + 1, all.size)
+                val res = try { feed(ctx, sub.feed, force = true) } catch (_: Throwable) { null }
+                if (res == null) { errors++; continue }
                 val pod = if (res.first.art.isEmpty()) sub else res.first
                 for (ep in res.second.take(n)) {
                     if (!done(p, ep) && !isDownloaded(ctx, ep) && !progress.containsKey(ep.url)) {
-                        started++
-                        download(ctx, p, pod, ep) { onFile() }
+                        started.add(ep.url)
+                        download(ctx, p, pod, ep) { }
                     }
                 }
             }
-            finished(started)
+            finished(started, errors)
         }.start()
     }
 

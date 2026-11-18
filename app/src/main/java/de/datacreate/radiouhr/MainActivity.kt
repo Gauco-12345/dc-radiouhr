@@ -132,12 +132,13 @@ class MainActivity : ScaledActivity() {
 
     private val podHost = object : PodcastHost {
         override fun skin(): Skin = this@MainActivity.skin
-        override fun radioNow(): RadioNow? {
-            if (pcMode || videoMode || !wantPlaying || stations.isEmpty()) return null
+        override fun radioPlay() = playCurrent()
+        override fun radioNow(idle: Boolean): RadioNow? {
+            if (pcMode || videoMode || stations.isEmpty() || (!wantPlaying && !idle)) return null
             val st = stations[current.coerceIn(0, stations.size - 1)]
             val t = tvNowPlaying.text.toString().trim()
             val song = if (t.startsWith("Verbinde") || t.startsWith("Keine Verbindung")) "" else t
-            return RadioNow(song.ifEmpty { st.name }, st.name, icons[st.url])
+            return RadioNow(if (wantPlaying) song.ifEmpty { st.name } else st.name, st.name, icons[st.url], wantPlaying)
         }
         override fun radioStop() = stopRadio()
         override val activity: Activity get() = this@MainActivity
@@ -253,28 +254,46 @@ class MainActivity : ScaledActivity() {
     private var radioBar: PlayerBar? = null
     private var radioBarSkin = ""
 
+    private var radioBarLand = false
+
     private fun updateRadioBar() {
         if (!::root.isInitialized) return
-        val want = radioPage && !night && pcMode && pcEp != null && videoBox == null
+        val land = isLand()
+        val want = radioPage && !night && videoBox == null && (land || (pcMode && pcEp != null))
         val fr = frameView() ?: return
+        val padB = dp(12).toInt()
         if (!want) {
             radioBar?.let { (it.view.parent as? ViewGroup)?.removeView(it.view) }
             radioBar = null
-            if (root.paddingBottom != dp(12).toInt()) root.setPadding(root.paddingLeft, root.paddingTop, root.paddingRight, dp(12).toInt())
+            if (root.paddingBottom != padB) root.setPadding(root.paddingLeft, root.paddingTop, root.paddingRight, padB)
             return
         }
         var b = radioBar
-        if (b == null || radioBarSkin != skin.id) {
+        if (b == null || radioBarSkin != skin.id || radioBarLand != land) {
             b?.let { (it.view.parent as? ViewGroup)?.removeView(it.view) }
-            b = PlayerBar(podHost, false)
+            b = PlayerBar(podHost, land, idleRadio = land)
             radioBar = b
             radioBarSkin = skin.id
-            fr.addView(b.view, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
-            b.view.addOnLayoutChangeListener { v, _, t, _, bt, _, ot, _, ob ->
-                if (bt - t != ob - ot) root.setPadding(root.paddingLeft, root.paddingTop, root.paddingRight, v.height + dp(6).toInt())
+            radioBarLand = land
+            if (land) {
+                // Querformat: links 1/3 Player, rechts 2/3 Radio – wie bei Podcast und Mediathek
+                if (root.paddingBottom != padB) root.setPadding(root.paddingLeft, root.paddingTop, root.paddingRight, padB)
+                b.view.gravity = Gravity.CENTER
+                b.view.background = GradientDrawable().apply {
+                    cornerRadius = dp(14)
+                    setColor(Look(skin).bar)
+                }
+                root.addView(b.view, 0, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                    rightMargin = dp(10).toInt()
+                })
+            } else {
+                fr.addView(b.view, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+                b.view.addOnLayoutChangeListener { v, _, t, _, bt, _, ot, _, ob ->
+                    if (bt - t != ob - ot && radioBar?.view === v) root.setPadding(root.paddingLeft, root.paddingTop, root.paddingRight, v.height + dp(6).toInt())
+                }
             }
-            dots?.let { d -> if (d.parent === fr) d.bringToFront() }
+            updateDots()
         }
         b.refresh()
     }
@@ -997,6 +1016,7 @@ class MainActivity : ScaledActivity() {
         weatherPage?.relayout()
         main.post { updateDots() }
         applyOrientation(newConfig)
+        updateRadioBar()
         buildFavorites()
     }
 
@@ -1069,7 +1089,9 @@ class MainActivity : ScaledActivity() {
         if (radioPage && !night) {
             // Radio-Seite: Radiobereich über den ganzen Bildschirm
             clockPanel.visibility = View.GONE
-            radioPanel.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            radioPanel.layoutParams = if (cfg.orientation == Configuration.ORIENTATION_LANDSCAPE)
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 2f)
+            else LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         } else {
             clockPanel.visibility = View.VISIBLE
         }
@@ -2092,7 +2114,9 @@ class MainActivity : ScaledActivity() {
         val dm = resources.displayMetrics
         val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val side = dp(18) + maxOf(dp(40), bdp(40).toFloat())
-        val w = (if (land && !radioPage) (dm.widthPixels - dp(24)) / 2.3f - dp(8) else dm.widthPixels - dp(24)) - side
+        val w = (if (land && !radioPage) (dm.widthPixels - dp(24)) / 2.3f - dp(8)
+            else if (land) (dm.widthPixels - dp(24)) * 2f / 3f - dp(10)
+            else dm.widthPixels - dp(24)) - side
         return (w - radioPanel.paddingLeft - radioPanel.paddingRight).toInt()
     }
 
