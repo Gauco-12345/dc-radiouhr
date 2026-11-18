@@ -625,7 +625,7 @@ class MainActivity : ScaledActivity() {
 
         setupPlayer()
         nowPlaying = try {
-            NowPlaying(this, onToggle = { notifToggle() }, onStop = { notifStop() })
+            NowPlaying(this, toggleCb = { notifToggle() }, stopCb = { notifStop() })
         } catch (_: Exception) { null }
         loadStations()
         Podcast.last(prefs)?.let { (p, e) ->

@@ -19,7 +19,7 @@ import android.os.Build
  * Zeigt in der Benachrichtigungsleiste (und auf dem Sperrbildschirm / Kopfhörer-Tasten),
  * was gerade läuft – mit Pause/Weiter-Taste.
  */
-class NowPlaying(private val a: Activity, private val onToggle: () -> Unit, private val onStop: () -> Unit) {
+class NowPlaying(private val a: Activity, private val toggleCb: () -> Unit, private val stopCb: () -> Unit) {
     private val nm = a.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     private val session = MediaSession(a, "DC Radiouhr")
     private var lastKey = ""
@@ -28,8 +28,8 @@ class NowPlaying(private val a: Activity, private val onToggle: () -> Unit, priv
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, i: Intent?) {
             when (i?.action) {
-                ACT_TOGGLE -> onToggle()
-                ACT_STOP -> onStop()
+                ACT_TOGGLE -> toggleCb()
+                ACT_STOP -> stopCb()
             }
         }
     }
@@ -42,9 +42,9 @@ class NowPlaying(private val a: Activity, private val onToggle: () -> Unit, priv
             })
         }
         session.setCallback(object : MediaSession.Callback() {
-            override fun onPlay() = onToggle()
-            override fun onPause() = onToggle()
-            override fun onStop() = onStop()
+            override fun onPlay() { toggleCb() }
+            override fun onPause() { toggleCb() }
+            override fun onStop() { stopCb() }
         })
         val f = IntentFilter().apply { addAction(ACT_TOGGLE); addAction(ACT_STOP) }
         if (Build.VERSION.SDK_INT >= 33) a.registerReceiver(receiver, f, Context.RECEIVER_NOT_EXPORTED)
