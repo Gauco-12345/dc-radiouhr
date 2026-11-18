@@ -169,6 +169,168 @@ class MainActivity : ScaledActivity() {
         override fun accent(): Int = skin.accent
     }
 
+    // ================================================================ Seiten (wischen)
+
+    private val PAGES = listOf("uhr", "radio", "podcast", "wetter")
+    private var page = 0
+    private var radioPage = false
+    private var weatherPage: WeatherPage? = null
+    private var dots: LinearLayout? = null
+    private var swipeX = 0f
+    private var swipeY = 0f
+    private var swipeOk = false
+    private var swipeT = 0L
+
+    private fun frameView() = findViewById<android.widget.FrameLayout>(R.id.frame)
+
+    /** Zeigt Seite i (0 Uhr, 1 Radio, 2 Podcast, 3 Wetter). dir: +1 von rechts, -1 von links, 0 ohne Animation. */
+    private fun showPage(i0: Int, dir: Int = 0) {
+        val i = ((i0 % PAGES.size) + PAGES.size) % PAGES.size
+        if (night && i != 0) setNight(false)
+        page = i
+        // Überlagerungen schließen
+        if (i != 2) podPanel?.let { if (it.visible) it.hide(keep = true) }
+        if (i != 3) weatherPage?.let { wp ->
+            (wp.scroll.parent as? ViewGroup)?.removeView(wp.scroll)
+            wp.destroy()
+            weatherPage = null
+        }
+        val wasRadio = radioPage
+        radioPage = i == 1
+        if (wasRadio != radioPage || i <= 1) {
+            applyOrientation(resources.configuration)
+            buildFavorites()
+        }
+        var target: View = root
+        when (i) {
+            2 -> {
+                openPodcasts()
+                podPanel?.rootView()?.let { target = it }
+            }
+            3 -> {
+                val wp = WeatherPage(this) { showPage(0, -1) }
+                weatherPage = wp
+                frameView().addView(wp.scroll, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                target = wp.scroll
+            }
+        }
+        if (dir != 0) {
+            val w = resources.displayMetrics.widthPixels.toFloat()
+            target.translationX = dir * w * 0.35f
+            target.alpha = 0.2f
+            target.animate().translationX(0f).alpha(1f).setDuration(220).start()
+        }
+        updateDots()
+    }
+
+    private fun updateDots() {
+        val fr = frameView()
+        var d = dots
+        if (d == null) {
+            d = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+            }
+            dots = d
+        }
+        (d.parent as? ViewGroup)?.removeView(d)
+        d.removeAllViews()
+        if (night || !prefs.getBoolean("pagesOn", true)) return
+        val c = if (page >= 2) Color.WHITE else skin.fg
+        for (n in PAGES.indices) {
+            val v = View(this)
+            val sz = dp(if (n == page) 9 else 7).toInt()
+            v.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.argb(if (n == page) 230 else 90, Color.red(c), Color.green(c), Color.blue(c)))
+            }
+            v.setOnClickListener { showPage(n, if (n > page) 1 else -1) }
+            val pad = dp(5).toInt()
+            d.addView(v, LinearLayout.LayoutParams(sz, sz).apply { setMargins(pad, pad, pad, pad) })
+        }
+        fr.addView(d, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(2).toInt() })
+    }
+
+    /** Ist unter dem Finger ein Element, das selbst seitlich gezogen wird? Dann kein Seitenwechsel. */
+    private fun blocksSwipe(v: View, x: Float, y: Float): Boolean {
+        if (v.visibility != View.VISIBLE) return false
+        val loc = IntArray(2)
+        v.getLocationOnScreen(loc)
+        if (x < loc[0] || y < loc[1] || x > loc[0] + v.width || y > loc[1] + v.height) return false
+        if (v is android.widget.SeekBar || v is android.widget.HorizontalScrollView || v is VolumeSlider ||
+            v is KnobView || v is DialView || v is EditText) return true
+        if (v is ViewGroup) for (n in v.childCount - 1 downTo 0) if (blocksSwipe(v.getChildAt(n), x, y)) return true
+        return false
+    }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (prefs.getBoolean("pagesOn", true) && !alarming && alarmOverlay == null) {
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    swipeX = ev.rawX
+                    swipeY = ev.rawY
+                    swipeT = System.currentTimeMillis()
+                    swipeOk = !blocksSwipe(frameView(), ev.rawX, ev.rawY)
+                }
+                android.view.MotionEvent.ACTION_UP -> if (swipeOk) {
+                    val dx = ev.rawX - swipeX
+                    val dy = ev.rawY - swipeY
+                    val dt = System.currentTimeMillis() - swipeT
+                    if (Math.abs(dx) > dp(90) && Math.abs(dx) > Math.abs(dy) * 2 && dt < 700) {
+                        val cancel = android.view.MotionEvent.obtain(ev).apply { action = android.view.MotionEvent.ACTION_CANCEL }
+                        super.dispatchTouchEvent(cancel)
+                        cancel.recycle()
+                        if (dx < 0) showPage(page + 1, 1) else showPage(page - 1, -1)
+                        return true
+                    }
+                }
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    // ================================================================ Podcasts automatisch laden
+
+    private fun onWifi(): Boolean {
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        return if (Build.VERSION.SDK_INT >= 23) {
+            val n = cm.activeNetwork ?: return false
+            val c = cm.getNetworkCapabilities(n) ?: return false
+            c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) || c.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)
+        } else {
+            @Suppress("DEPRECATION")
+            cm.activeNetworkInfo?.type == android.net.ConnectivityManager.TYPE_WIFI
+        }
+    }
+
+    /** Neue Folgen der Abos herunterladen und Gehörtes aufräumen (stündlich). */
+    private fun podcastAuto(force: Boolean = false) {
+        val mode = prefs.getString("pcAuto", "off") ?: "off"
+        if (!force && System.currentTimeMillis() - prefs.getLong("pcAutoLast", 0L) < 55 * 60_000L) return
+        prefs.edit().putLong("pcAutoLast", System.currentTimeMillis()).apply()
+        if (prefs.getBoolean("pcAutoDelete", false)) {
+            for ((_, ep) in Podcast.downloads(this, prefs)) {
+                if (Podcast.done(prefs, ep) && pcEp?.url != ep.url) Podcast.deleteDownload(this, prefs, ep)
+            }
+        }
+        if (mode == "off" || (mode == "wifi" && !onWifi())) return
+        val n = prefs.getInt("pcAutoCount", 1)
+        val subs = Podcast.subs(prefs)
+        if (subs.isEmpty()) return
+        io.execute {
+            for (sub in subs) {
+                val res = try { Podcast.feed(this, sub.feed, force = true) } catch (_: Exception) { null } ?: continue
+                val pod = if (res.first.art.isEmpty()) sub else res.first
+                for (ep in res.second.take(n)) {
+                    if (!Podcast.done(prefs, ep) && !Podcast.isDownloaded(this, ep) && !Podcast.progress.containsKey(ep.url)) {
+                        Podcast.download(this, prefs, pod, ep) { }
+                    }
+                }
+            }
+        }
+    }
+
     private fun pcPlaying() = pcMode && player.playWhenReady &&
         player.playbackState != Player.STATE_ENDED && player.playbackState != Player.STATE_IDLE
 
@@ -221,7 +383,10 @@ class MainActivity : ScaledActivity() {
 
     private fun openPodcasts() {
         val panel = podPanel ?: PodcastPanel(podHost).also { podPanel = it }
+        panel.onClose = { if (page == 2) { page = 0; radioPage = false; updateDots() } }
         panel.show(findViewById(R.id.frame))
+        page = 2
+        main.post { updateDots() }
     }
 
     private var night = false
@@ -343,6 +508,9 @@ class MainActivity : ScaledActivity() {
         if (intent?.action == Alarms.ACTION) main.post { fireAlarm() }
         main.postDelayed({ showLastCrash() }, 800)
         main.postDelayed({ autoUpdateCheck() }, 20_000L)
+        main.postDelayed({ podcastAuto(force = true) }, 30_000L)
+        val sp = PAGES.indexOf(prefs.getString("startPage", "uhr") ?: "uhr").coerceAtLeast(0)
+        if (intent?.action != Alarms.ACTION) main.post { showPage(sp) } else main.post { updateDots() }
     }
 
     override fun onResume() {
@@ -415,7 +583,8 @@ class MainActivity : ScaledActivity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         val p = podPanel
-        if (p != null && p.visible) p.back() else {
+        if (weatherPage != null) showPage(0, -1)
+        else if (p != null && p.visible) p.back() else {
             @Suppress("DEPRECATION")
             super.onBackPressed()
         }
@@ -484,6 +653,7 @@ class MainActivity : ScaledActivity() {
     private val alarmAutoEnd = Runnable { if (alarming) endAlarm(stopRadio = true) }
 
     private fun startAlarm(url: String) {
+        if (page != 0) showPage(0)
         alarming = true
         main.removeCallbacks(backToNight)
         if (night) setNight(false)
@@ -585,6 +755,8 @@ class MainActivity : ScaledActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         podPanel?.let { if (it.visible) it.relayout(findViewById(R.id.frame)) }
+        weatherPage?.relayout()
+        main.post { updateDots() }
         applyOrientation(newConfig)
         buildFavorites()
     }
@@ -650,6 +822,13 @@ class MainActivity : ScaledActivity() {
             ).apply { topMargin = dp(8).toInt() }
             ts = skin.clockScale * dm.widthPixels / (if (night) 2.5f else 2.6f)
             availH = dm.heightPixels * (if (night) 0.85f else 0.55f)
+        }
+        if (radioPage && !night) {
+            // Radio-Seite: Radiobereich über den ganzen Bildschirm
+            clockPanel.visibility = View.GONE
+            radioPanel.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        } else {
+            clockPanel.visibility = View.VISIBLE
         }
         tvTime.setTextSize(TypedValue.COMPLEX_UNIT_PX, ts)
         arrangeControls(cfg.orientation == Configuration.ORIENTATION_LANDSCAPE)
@@ -752,11 +931,11 @@ class MainActivity : ScaledActivity() {
         side.addView(btnPod, 2, LinearLayout.LayoutParams(size, size).apply { setMargins(0, m, 0, m) })
         volSlider.layoutParams = LinearLayout.LayoutParams(maxOf(dp(40).toInt(), size), 0, 1f).apply { topMargin = m }
         findViewById<View>(R.id.radioMain).layoutParams = LinearLayout.LayoutParams(0,
-            if (land) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            if (land || radioPage) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             gravity = Gravity.CENTER_VERTICAL
         }
         // genug Höhe für Tasten + Schieber
-        radioPanel.minimumHeight = if (land) 0 else dp(210).toInt()
+        radioPanel.minimumHeight = if (land || radioPage) 0 else dp(210).toInt()
         row.visibility = View.GONE
         // Querformat: Zahnrad oben in dieser Spalte (überdeckt dann nichts), Hochformat: oben rechts in der Ecke
         (btnGear.parent as? ViewGroup)?.removeView(btnGear)
@@ -793,6 +972,7 @@ class MainActivity : ScaledActivity() {
                 checkAutoNight(cal.get(Calendar.HOUR_OF_DAY))
                 if (!first) loadEvents()
                 updateNextAlarm()
+                if (!first) podcastAuto()
                 if (!first) {
                     val snooze = prefs.getLong("snoozeAt", 0L)
                     if (Alarms.dueNow(prefs) != null || (snooze > 0 && snooze <= System.currentTimeMillis() + 30_000L)) fireAlarm()
@@ -855,7 +1035,14 @@ class MainActivity : ScaledActivity() {
 
     private fun setNight(on: Boolean) {
         night = on
+        if (on && page != 0) {
+            page = 0
+            radioPage = false
+            podPanel?.let { if (it.visible) it.hide(keep = true) }
+            weatherPage?.let { wp -> (wp.scroll.parent as? ViewGroup)?.removeView(wp.scroll); wp.destroy(); weatherPage = null }
+        }
         applyLook()
+        updateDots()
         val lp = window.attributes
         lp.screenBrightness = if (on) nightLevel().coerceAtLeast(0.01f) else WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
         window.attributes = lp
@@ -1644,7 +1831,7 @@ class MainActivity : ScaledActivity() {
         val dm = resources.displayMetrics
         val land = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val side = dp(18) + maxOf(dp(40), bdp(40).toFloat())
-        val w = (if (land) (dm.widthPixels - dp(24)) / 2.3f - dp(8) else dm.widthPixels - dp(24)) - side
+        val w = (if (land && !radioPage) (dm.widthPixels - dp(24)) / 2.3f - dp(8) else dm.widthPixels - dp(24)) - side
         return (w - radioPanel.paddingLeft - radioPanel.paddingRight).toInt()
     }
 
@@ -1656,12 +1843,15 @@ class MainActivity : ScaledActivity() {
 
     private fun isLand() = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
+    /** Senderkacheln füllen den Platz (Querformat oder Radio-Seite). */
+    private fun fillMode() = isLand() || radioPage
+
     /** Raster (mehrere Reihen) oder eine wischbare Reihe zeigen. Im Querformat füllt das Raster die Resthöhe. */
     private fun showGrid(grid: Boolean, portraitMaxH: Int = 0) {
         val gs = findViewById<View>(R.id.favGridScroll)
         favScroll.visibility = vis(!grid)
         gs.visibility = vis(grid)
-        val land = isLand()
+        val land = fillMode()
         gs.layoutParams = (gs.layoutParams as LinearLayout.LayoutParams).apply {
             height = if (land) 0 else if (portraitMaxH > 0) portraitMaxH else ViewGroup.LayoutParams.WRAP_CONTENT
             weight = if (land) 1f else 0f
@@ -1757,7 +1947,7 @@ class MainActivity : ScaledActivity() {
 
         when (skin.presets) {
             Presets.NONE -> return
-            Presets.ROW, Presets.KEYS -> if (isLand()) {
+            Presets.ROW, Presets.KEYS -> if (fillMode()) {
                 // Querformat: mehrere Reihen, füllen den freien Platz, bei vielen Sendern nach oben wischen
                 val keys = skin.presets == Presets.KEYS
                 val views = mutableListOf<View>()

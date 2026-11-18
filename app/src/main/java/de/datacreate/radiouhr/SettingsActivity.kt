@@ -307,6 +307,12 @@ class SettingsActivity : ScaledActivity() {
             main.post { recreate() }
         }
         c.addView(small("„automatisch“ passt alles an die Bildschirmgröße an (Handy, 8-Zoll-Tablet …). Mit % feiner einstellen."))
+        val pages = listOf("uhr", "radio", "podcast", "wetter")
+        spinner(c, "Startseite", listOf("Uhr", "Radio", "Podcast", "Wetter"), maxOf(0, pages.indexOf(prefs.getString("startPage", "uhr")))) {
+            prefs.edit().putString("startPage", pages[it]).apply()
+        }
+        check(c, "Seiten wischen (Uhr · Radio · Podcast · Wetter)", "pagesOn", true,
+            "Nach links/rechts wischen wechselt die Seite; die Punkte unten zeigen, wo du bist.")
         val favStyles = listOf("auto", "list")
         spinner(c, "Senderleiste", listOf("Kacheln (wie Design)", "Liste: Logo + Name"), maxOf(0, favStyles.indexOf(prefs.getString("favStyle", "auto")))) {
             prefs.edit().putString("favStyle", favStyles[it]).apply()
@@ -590,6 +596,20 @@ class SettingsActivity : ScaledActivity() {
 
         }
         if (tab == 5) {
+        // Podcasts
+        section("Podcasts")
+        c = card()
+        val autoIds = listOf("off", "wifi", "always")
+        spinner(c, "Neue Folgen automatisch laden", listOf("aus", "nur im WLAN", "immer"), maxOf(0, autoIds.indexOf(prefs.getString("pcAuto", "off")))) {
+            prefs.edit().putString("pcAuto", autoIds[it]).apply()
+        }
+        val cnt = listOf(1, 2, 3, 5)
+        spinner(c, "Neueste Folgen je Abo", cnt.map { "$it" }, maxOf(0, cnt.indexOf(prefs.getInt("pcAutoCount", 1)))) {
+            prefs.edit().putInt("pcAutoCount", cnt[it]).apply()
+        }
+        check(c, "Gehörte Downloads automatisch löschen", "pcAutoDelete", false)
+        c.addView(small("Die App schaut stündlich nach neuen Folgen deiner Abos. Bereits gehörte Folgen werden nicht geladen."))
+
         // Radio
         section("Radio")
         c = card()

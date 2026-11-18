@@ -71,6 +71,8 @@ class PodcastPanel(private val h: PodcastHost) {
     private val dateFmt = SimpleDateFormat("d. MMM yyyy", Locale.GERMANY)
 
     val visible get() = root != null
+    var onClose: (() -> Unit)? = null
+    fun rootView(): View? = root
 
     private val bg = col("#0F1215")
     private val card = col("#1B2026")
@@ -221,7 +223,10 @@ class PodcastPanel(private val h: PodcastHost) {
         root?.let { (it.parent as? ViewGroup)?.removeView(it) }
         root = null
         statusViews.clear()
-        if (!keep) screen = "home"
+        if (!keep) {
+            screen = "home"
+            onClose?.invoke()
+        }
     }
 
     fun back() {

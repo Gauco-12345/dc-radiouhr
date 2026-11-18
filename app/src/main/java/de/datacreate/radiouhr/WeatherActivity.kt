@@ -21,42 +21,37 @@ import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
 
-/** Ausführliche Wetterseite: Netatmo-Station, aktuelle Werte, 24 Stunden, 7 Tage. */
-class WeatherActivity : ScaledActivity() {
+/** Ausführliche Wetterseite als wiederverwendbare Ansicht (eigene Seite oder Wisch-Seite). */
+class WeatherPage(private val a: Activity, private val onBack: () -> Unit) {
 
-    private lateinit var prefs: SharedPreferences
-    private lateinit var list: LinearLayout
-    private lateinit var scroll: ScrollView
+    private val prefs: SharedPreferences = Wx.prefs(a)
+    private var list: LinearLayout
+    val scroll: ScrollView = ScrollView(a)
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private val accent = col("#FF8A3D")
     private val sub = col("#9A9A9A")
     private val iconCol = col("#FFD27A")
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun dp(v: Int) = (v * a.resources.displayMetrics.density).toInt()
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        prefs = Wx.prefs(this)
-        scroll = ScrollView(this)
+    init {
         scroll.setBackgroundColor(col("#101418"))
-        list = LinearLayout(this).apply {
+        list = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(12), dp(18), dp(40))
         }
         scroll.addView(list)
-        setContentView(scroll)
         render()
         refresh()
     }
 
-    override fun onDestroy() {
+    fun destroy() {
         io.shutdownNow()
-        super.onDestroy()
     }
 
     private fun useMeta() = prefs.getString("wxSource", "meta") == "meta"
 
-    private fun refresh() {
+    fun refresh() {
         val lat = prefs.getFloat("wxLat", prefs.getFloat("lat", 47.8295f)).toDouble()
         val lon = prefs.getFloat("wxLon", prefs.getFloat("lon", 7.9447f)).toDouble()
         io.execute {
@@ -72,7 +67,7 @@ class WeatherActivity : ScaledActivity() {
 
     // ------------------------------------------------------------ Bausteine
 
-    private fun t(s: String, size: Float, color: Int = Color.WHITE, bold: Boolean = false, light: Boolean = false) = TextView(this).apply {
+    private fun t(s: String, size: Float, color: Int = Color.WHITE, bold: Boolean = false, light: Boolean = false) = TextView(a).apply {
         text = s
         textSize = size
         setTextColor(color)
@@ -88,7 +83,7 @@ class WeatherActivity : ScaledActivity() {
     }
 
     private fun card(): LinearLayout {
-        val c = LinearLayout(this).apply {
+        val c = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 cornerRadius = dp(14).toFloat()
@@ -105,10 +100,10 @@ class WeatherActivity : ScaledActivity() {
         var row: LinearLayout? = null
         items.forEachIndexed { i, (label, value) ->
             if (i % cols == 0) {
-                row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                row = LinearLayout(a).apply { orientation = LinearLayout.HORIZONTAL }
                 parent.addView(row)
             }
-            val cell = LinearLayout(this).apply {
+            val cell = LinearLayout(a).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(0, dp(6), dp(6), dp(6))
             }
@@ -117,7 +112,7 @@ class WeatherActivity : ScaledActivity() {
             row?.addView(cell, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
         val rest = (cols - items.size % cols) % cols
-        repeat(rest) { row?.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f)) }
+        repeat(rest) { row?.addView(View(a), LinearLayout.LayoutParams(0, 1, 1f)) }
     }
 
     private fun d(o: JSONObject?, key: String): Double = o?.optDouble(key, Double.NaN) ?: Double.NaN
@@ -135,25 +130,24 @@ class WeatherActivity : ScaledActivity() {
 
     // ------------------------------------------------------------ Aufbau
 
-    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
-        super.onConfigurationChanged(newConfig)
+    fun relayout() {
         render()
     }
 
     private lateinit var outer: LinearLayout
 
-    private fun render() {
+    fun render() {
         val y = scroll.scrollY
         if (!::outer.isInitialized) outer = list
         outer.removeAllViews()
-        val land = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val land = a.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         list = outer
         var right: LinearLayout? = null
         if (land) {
-            val head = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            val cols = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-            right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val head = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+            val cols = LinearLayout(a).apply { orientation = LinearLayout.HORIZONTAL }
+            val left = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+            right = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
             cols.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = dp(10) })
             cols.addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { leftMargin = dp(10) })
             outer.addView(head)
@@ -183,13 +177,13 @@ class WeatherActivity : ScaledActivity() {
     }
 
     private fun renderHead() {
-        val head = LinearLayout(this).apply {
+        val head = LinearLayout(a).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         head.addView(t("‹", 30f).apply {
             setPadding(0, 0, dp(14), 0)
-            setOnClickListener { finish() }
+            setOnClickListener { onBack() }
         })
         val place = prefs.getString("wxPlaceName", null) ?: prefs.getString("placeName", "Todtnau") ?: ""
         head.addView(t("Wetter · $place", 22f, light = true))
@@ -209,7 +203,7 @@ class WeatherActivity : ScaledActivity() {
         if (od != null) {
             val c = card()
             c.addView(t("Außen", 13f, sub))
-            val row = LinearLayout(this).apply {
+            val row = LinearLayout(a).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.BOTTOM
             }
@@ -267,7 +261,7 @@ class WeatherActivity : ScaledActivity() {
         val cur = wx.optJSONObject("current") ?: return
         section("Jetzt")
         val c = card()
-        val row = LinearLayout(this).apply {
+        val row = LinearLayout(a).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
@@ -326,11 +320,11 @@ class WeatherActivity : ScaledActivity() {
         val h = wx.optJSONObject("hourly") ?: return
         val times = h.optJSONArray("time") ?: return
         section("Nächste 24 Stunden")
-        val hs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val hs = HorizontalScrollView(a).apply { isHorizontalScrollBarEnabled = false }
+        val row = LinearLayout(a).apply { orientation = LinearLayout.HORIZONTAL }
         hs.addView(row)
         for (i in 0 until minOf(24, times.length())) {
-            val cell = LinearLayout(this).apply {
+            val cell = LinearLayout(a).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER_HORIZONTAL
                 setPadding(dp(6), dp(8), dp(6), dp(8))
@@ -362,14 +356,14 @@ class WeatherActivity : ScaledActivity() {
             val label = if (i == 0) "Heute" else try { wd.format(parse.parse(times.getString(i))!!) } catch (_: Exception) { "" }
             val code = dy.optJSONArray("weather_code")?.optInt(i, -1) ?: -1
             val m = md.getOrNull(i)
-            val row = LinearLayout(this).apply {
+            val row = LinearLayout(a).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(8), 0, dp(8))
             }
             row.addView(t(label, 14f), LinearLayout.LayoutParams(dp(76), ViewGroup.LayoutParams.WRAP_CONTENT))
             row.addView(t(if (m?.cat != null) Meta.icon(m.cat) else Wx.icon(code), 20f, iconCol), LinearLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.WRAP_CONTENT))
-            val mid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val mid = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
             mid.addView(t(if (m?.cat != null) Meta.text(m.cat) else Wx.text(code), 13f))
             val rain = m?.psum?.takeUnless { it.isNaN() } ?: dy.optJSONArray("precipitation_sum")?.optDouble(i) ?: Double.NaN
             val prob = dy.optJSONArray("precipitation_probability_max")?.optDouble(i) ?: Double.NaN
@@ -382,5 +376,28 @@ class WeatherActivity : ScaledActivity() {
             row.addView(t("${Wx.deg(mx)} / ${Wx.deg(mn)}", 15f))
             c.addView(row)
         }
+    }
+}
+
+
+/** Eigene Wetterseite (aus dem Startbildschirm geöffnet). */
+class WeatherActivity : ScaledActivity() {
+    private var page: WeatherPage? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val pg = WeatherPage(this) { finish() }
+        page = pg
+        setContentView(pg.scroll)
+    }
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        page?.relayout()
+    }
+
+    override fun onDestroy() {
+        page?.destroy()
+        super.onDestroy()
     }
 }
