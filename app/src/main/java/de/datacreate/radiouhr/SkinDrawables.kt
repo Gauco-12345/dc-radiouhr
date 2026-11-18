@@ -257,6 +257,7 @@ class BgDrawable(private val style: BgStyle, private val k: Skin, private val d:
             BgStyle.MOUNTAINS -> mountains(c, w, h)
             BgStyle.PAPER -> paper(c, w, h)
             BgStyle.CONCRETE -> concrete(c, w, h)
+            BgStyle.MEADOW -> meadow(c, w, h)
         }
     }
 
@@ -471,6 +472,70 @@ class BgDrawable(private val style: BgStyle, private val k: Skin, private val d:
                     tx += (6 + tr.nextFloat() * 14) * d
                 }
             }
+        }
+    }
+
+    /** Kinderzimmer: Sonne, Wolken, grüne Hügel mit Blumen. */
+    private fun meadow(c: Canvas, w: Float, h: Float) {
+        val rnd = Random(7)
+        p.style = Paint.Style.FILL
+        // Sonne mit Strahlen
+        val sr = min(w, h) * 0.08f
+        val sx = w * 0.12f
+        val sy = h * 0.14f
+        p.color = withAlpha(col("#FFE066"), 90)
+        for (i in 0 until 12) {
+            val a = Math.toRadians(i * 30.0)
+            val path = Path()
+            path.moveTo(sx + (kotlin.math.sin(a - 0.12) * sr * 1.2).toFloat(), sy - (kotlin.math.cos(a - 0.12) * sr * 1.2).toFloat())
+            path.lineTo(sx + (kotlin.math.sin(a) * sr * 2.1).toFloat(), sy - (kotlin.math.cos(a) * sr * 2.1).toFloat())
+            path.lineTo(sx + (kotlin.math.sin(a + 0.12) * sr * 1.2).toFloat(), sy - (kotlin.math.cos(a + 0.12) * sr * 1.2).toFloat())
+            path.close()
+            c.drawPath(path, p)
+        }
+        p.color = col("#FFD23F")
+        c.drawCircle(sx, sy, sr, p)
+        // Wolken
+        p.color = withAlpha(Color.WHITE, 225)
+        for (i in 0 until 4) {
+            val cx = w * (0.32f + i * 0.2f) + rnd.nextFloat() * w * 0.06f
+            val cy = h * (0.08f + rnd.nextFloat() * 0.16f)
+            val r = min(w, h) * (0.035f + rnd.nextFloat() * 0.02f)
+            c.drawCircle(cx, cy, r, p)
+            c.drawCircle(cx + r * 1.1f, cy + r * 0.2f, r * 0.8f, p)
+            c.drawCircle(cx - r * 1.1f, cy + r * 0.25f, r * 0.75f, p)
+            c.drawRoundRect(RectF(cx - r * 1.8f, cy, cx + r * 1.8f, cy + r * 0.95f), r * 0.5f, r * 0.5f, p)
+        }
+        // Hügel
+        val hills = arrayOf(col("#9BD770"), col("#6CC24A"), col("#4FA83D"))
+        hills.forEachIndexed { i, color ->
+            val base = h * (0.80f + i * 0.07f)
+            val amp = h * 0.05f
+            val path = Path()
+            path.moveTo(0f, h)
+            var x = 0f
+            while (x <= w + 8 * d) {
+                path.lineTo(x, base + kotlin.math.sin(x / (w * (0.22f + i * 0.07f)) + i * 2.1f).toFloat() * amp)
+                x += 8 * d
+            }
+            path.lineTo(w, h)
+            path.close()
+            p.color = color
+            c.drawPath(path, p)
+        }
+        // Blumen
+        val petals = intArrayOf(col("#FF6B8A"), col("#FFFFFF"), col("#FFD23F"), col("#B07CFF"))
+        for (i in 0 until 26) {
+            val fx = rnd.nextFloat() * w
+            val fy = h * (0.9f + rnd.nextFloat() * 0.09f)
+            val fr = (2.5f + rnd.nextFloat() * 2f) * d
+            p.color = petals[i % petals.size]
+            for (k in 0 until 5) {
+                val a = Math.toRadians(k * 72.0)
+                c.drawCircle(fx + (kotlin.math.sin(a) * fr).toFloat(), fy - (kotlin.math.cos(a) * fr).toFloat(), fr * 0.7f, p)
+            }
+            p.color = col("#FFB000")
+            c.drawCircle(fx, fy, fr * 0.55f, p)
         }
     }
 

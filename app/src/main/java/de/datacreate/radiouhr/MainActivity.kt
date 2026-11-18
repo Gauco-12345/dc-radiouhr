@@ -167,12 +167,107 @@ class MainActivity : ScaledActivity() {
             if (pcMode) player.setPlaybackSpeed(f)
         }
         override fun accent(): Int = skin.accent
+        override fun localBitmap(uri: android.net.Uri, max: Int): Bitmap? = decodeLocal(uri, max)
+        override fun playVideo(uri: android.net.Uri, title: String) = this@MainActivity.playVideo(uri, title)
+        override fun setQueue(q: List<Podcast.Ep>) { mediaQueue = q }
+        override fun openSettings(tab: Int) {
+            startActivity(Intent(this@MainActivity, SettingsActivity::class.java).putExtra("tab", tab))
+        }
+    }
+
+    // ================================================================ Mediathek
+
+    private var medPanel: PodcastPanel? = null
+    private var mediaQueue: List<Podcast.Ep> = emptyList()
+    private var videoMode = false
+    private var videoBox: View? = null
+    private var videoView: androidx.media3.ui.PlayerView? = null
+
+    private fun isMedia(p: Podcast.Pod?) = p?.feed?.startsWith("media:") == true
+
+    private fun decodeLocal(uri: android.net.Uri, max: Int): Bitmap? = try {
+        val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) }
+        var sample = 1
+        while (o.outWidth / sample > max || o.outHeight / sample > max) sample *= 2
+        contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }
+    } catch (_: Throwable) { null }
+
+    private fun openMedia() {
+        podPanel?.let { if (it.visible) it.hide(keep = true) }
+        val panel = medPanel ?: PodcastPanel(podHost, media = true).also { medPanel = it }
+        panel.onClose = { if (pid == "medien") { pid = "uhr"; radioPage = false; updateDots() } }
+        panel.show(frameView())
+        pid = "medien"
+        main.post { updateDots() }
+    }
+
+    private fun playVideo(uri: android.net.Uri, title: String) {
+        savePcPos()
+        if (pcPlaying()) player.pause()
+        main.removeCallbacks(retry)
+        wantPlaying = false
+        videoMode = true
+        player.setMediaItem(MediaItem.fromUri(uri))
+        player.prepare()
+        player.setPlaybackSpeed(1f)
+        player.volume = 1f
+        player.play()
+        val box = android.widget.FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+            isClickable = true
+        }
+        val pv = androidx.media3.ui.PlayerView(this).apply {
+            this.player = this@MainActivity.player
+            useController = true
+            keepScreenOn = true
+            setShowNextButton(false)
+            setShowPreviousButton(false)
+        }
+        box.addView(pv, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        box.addView(TextView(this).apply {
+            text = "✕"
+            textSize = 26f
+            setTextColor(Color.WHITE)
+            setShadowLayer(6f, 0f, 0f, Color.BLACK)
+            val p = dp(14).toInt()
+            setPadding(p, p, p, p)
+            setOnClickListener { closeVideo() }
+        }, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END))
+        box.addView(TextView(this).apply {
+            text = title
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            setShadowLayer(6f, 0f, 0f, Color.BLACK)
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
+            val p = dp(16).toInt()
+            setPadding(p, p, dp(64).toInt(), p)
+        }, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
+        frameView().addView(box, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        videoBox = box
+        videoView = pv
+    }
+
+    private fun closeVideo() {
+        videoView?.player = null
+        videoView = null
+        videoBox?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        videoBox = null
+        if (videoMode) {
+            videoMode = false
+            player.stop()
+            player.clearMediaItems()
+        }
+        showStationName()
+        updatePlayButton()
+        podPanel?.refresh()
+        medPanel?.refresh()
     }
 
     // ================================================================ Seiten (wischen)
 
-    private val PAGES = listOf("uhr", "radio", "podcast", "wetter")
-    private var page = 0
+    private var pid = "uhr"
     private var radioPage = false
     private var weatherPage: WeatherPage? = null
     private var dots: LinearLayout? = null
@@ -183,35 +278,48 @@ class MainActivity : ScaledActivity() {
 
     private fun frameView() = findViewById<android.widget.FrameLayout>(R.id.frame)
 
-    /** Zeigt Seite i (0 Uhr, 1 Radio, 2 Podcast, 3 Wetter). dir: +1 von rechts, -1 von links, 0 ohne Animation. */
-    private fun showPage(i0: Int, dir: Int = 0) {
-        val i = ((i0 % PAGES.size) + PAGES.size) % PAGES.size
-        if (night && i != 0) setNight(false)
-        page = i
-        // Überlagerungen schließen
-        if (i != 2) podPanel?.let { if (it.visible) it.hide(keep = true) }
-        if (i != 3) weatherPage?.let { wp ->
+    private fun pages() = Pages.active(prefs)
+
+    private fun closeWeatherPage() {
+        weatherPage?.let { wp ->
             (wp.scroll.parent as? ViewGroup)?.removeView(wp.scroll)
             wp.destroy()
             weatherPage = null
         }
+    }
+
+    /** Zeigt eine Seite (uhr, radio, podcast, medien, wetter). dir: +1 von rechts, -1 von links, 0 ohne Animation. */
+    private fun showPage(id0: String, dir: Int = 0) {
+        val id = if (id0 in pages()) id0 else "uhr"
+        if (night && id != "uhr") setNight(false)
+        pid = id
+        // Überlagerungen schließen
+        if (id != "podcast") podPanel?.let { if (it.visible) it.hide(keep = true) }
+        if (id != "medien") medPanel?.let { if (it.visible) it.hide(keep = true) }
+        if (id != "wetter") closeWeatherPage()
         val wasRadio = radioPage
-        radioPage = i == 1
-        if (wasRadio != radioPage || i <= 1) {
+        radioPage = id == "radio"
+        if (wasRadio != radioPage || id == "uhr" || id == "radio") {
             applyOrientation(resources.configuration)
             buildFavorites()
         }
         var target: View = root
-        when (i) {
-            2 -> {
+        when (id) {
+            "podcast" -> {
                 openPodcasts()
                 podPanel?.rootView()?.let { target = it }
             }
-            3 -> {
-                val wp = WeatherPage(this) { showPage(0, -1) }
-                weatherPage = wp
-                frameView().addView(wp.scroll, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-                target = wp.scroll
+            "medien" -> {
+                openMedia()
+                medPanel?.rootView()?.let { target = it }
+            }
+            "wetter" -> {
+                if (weatherPage == null) {
+                    val wp = WeatherPage(this) { showPage("uhr", -1) }
+                    weatherPage = wp
+                    frameView().addView(wp.scroll, android.widget.FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                }
+                target = weatherPage!!.scroll
             }
         }
         if (dir != 0) {
@@ -221,6 +329,13 @@ class MainActivity : ScaledActivity() {
             target.animate().translationX(0f).alpha(1f).setDuration(220).start()
         }
         updateDots()
+    }
+
+    private fun stepPage(d: Int) {
+        val act = pages()
+        if (act.size < 2) return
+        val i = act.indexOf(pid).coerceAtLeast(0)
+        showPage(act[((i + d) % act.size + act.size) % act.size], d)
     }
 
     private fun updateDots() {
@@ -235,16 +350,18 @@ class MainActivity : ScaledActivity() {
         }
         (d.parent as? ViewGroup)?.removeView(d)
         d.removeAllViews()
-        if (night || !prefs.getBoolean("pagesOn", true)) return
-        val c = if (page >= 2) Color.WHITE else skin.fg
-        for (n in PAGES.indices) {
+        val act = pages()
+        if (night || !prefs.getBoolean("pagesOn", true) || act.size < 2 || videoBox != null) return
+        val c = if (pid != "uhr" && pid != "radio") Color.WHITE else skin.fg
+        val cur = act.indexOf(pid)
+        for ((n, id) in act.withIndex()) {
             val v = View(this)
-            val sz = dp(if (n == page) 9 else 7).toInt()
+            val sz = dp(if (n == cur) 9 else 7).toInt()
             v.background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.argb(if (n == page) 230 else 90, Color.red(c), Color.green(c), Color.blue(c)))
+                setColor(Color.argb(if (n == cur) 230 else 90, Color.red(c), Color.green(c), Color.blue(c)))
             }
-            v.setOnClickListener { showPage(n, if (n > page) 1 else -1) }
+            v.setOnClickListener { showPage(id, if (n > cur) 1 else -1) }
             val pad = dp(5).toInt()
             d.addView(v, LinearLayout.LayoutParams(sz, sz).apply { setMargins(pad, pad, pad, pad) })
         }
@@ -265,7 +382,7 @@ class MainActivity : ScaledActivity() {
     }
 
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        if (prefs.getBoolean("pagesOn", true) && !alarming && alarmOverlay == null) {
+        if (prefs.getBoolean("pagesOn", true) && !alarming && alarmOverlay == null && videoBox == null) {
             when (ev.actionMasked) {
                 android.view.MotionEvent.ACTION_DOWN -> {
                     swipeX = ev.rawX
@@ -281,7 +398,7 @@ class MainActivity : ScaledActivity() {
                         val cancel = android.view.MotionEvent.obtain(ev).apply { action = android.view.MotionEvent.ACTION_CANCEL }
                         super.dispatchTouchEvent(cancel)
                         cancel.recycle()
-                        if (dx < 0) showPage(page + 1, 1) else showPage(page - 1, -1)
+                        stepPage(if (dx < 0) 1 else -1)
                         return true
                     }
                 }
@@ -334,7 +451,7 @@ class MainActivity : ScaledActivity() {
     private fun pcPlaying() = pcMode && player.playWhenReady &&
         player.playbackState != Player.STATE_ENDED && player.playbackState != Player.STATE_IDLE
 
-    private fun anyPlaying() = wantPlaying || pcPlaying()
+    private fun anyPlaying() = wantPlaying || pcPlaying() || videoMode
 
     private fun savePcPos() {
         val ep = pcEp ?: return
@@ -359,7 +476,10 @@ class MainActivity : ScaledActivity() {
     }
 
     private fun playEpisode(pod: Podcast.Pod, ep: Podcast.Ep) {
+        if (videoBox != null) closeVideo()
+        videoMode = false
         savePcPos()
+        if (!isMedia(pod)) mediaQueue = emptyList()
         pcPod = pod
         pcEp = ep
         Podcast.saveLast(prefs, pod, ep)
@@ -379,13 +499,15 @@ class MainActivity : ScaledActivity() {
         }
         showStationName()
         podPanel?.refresh()
+        medPanel?.refresh()
     }
 
     private fun openPodcasts() {
+        medPanel?.let { if (it.visible) it.hide(keep = true) }
         val panel = podPanel ?: PodcastPanel(podHost).also { podPanel = it }
-        panel.onClose = { if (page == 2) { page = 0; radioPage = false; updateDots() } }
+        panel.onClose = { if (pid == "podcast") { pid = "uhr"; radioPage = false; updateDots() } }
         panel.show(findViewById(R.id.frame))
-        page = 2
+        pid = "podcast"
         main.post { updateDots() }
     }
 
@@ -460,6 +582,7 @@ class MainActivity : ScaledActivity() {
             scaleType = ImageView.ScaleType.FIT_CENTER
             isClickable = true
             setOnClickListener { openPodcasts() }
+            setOnLongClickListener { openMedia(); true }
         }
 
         btnPlay.setOnClickListener { if (wantPlaying) stopRadio() else playCurrent() }
@@ -467,7 +590,7 @@ class MainActivity : ScaledActivity() {
             if (pcMode && pcEp != null) pcToggle() else if (wantPlaying) stopRadio() else playCurrent()
         }
         tvStation.setOnLongClickListener {
-            if (pcMode && pcEp != null) openPodcasts() else showStations()
+            if (pcMode && pcEp != null) { if (isMedia(pcPod)) openMedia() else openPodcasts() } else showStations()
             true
         }
         volSlider = findViewById(R.id.volSlider)
@@ -509,7 +632,7 @@ class MainActivity : ScaledActivity() {
         main.postDelayed({ showLastCrash() }, 800)
         main.postDelayed({ autoUpdateCheck() }, 20_000L)
         main.postDelayed({ podcastAuto(force = true) }, 30_000L)
-        val sp = PAGES.indexOf(prefs.getString("startPage", "uhr") ?: "uhr").coerceAtLeast(0)
+        val sp = prefs.getString("startPage", "uhr") ?: "uhr"
         if (intent?.action != Alarms.ACTION) main.post { showPage(sp) } else main.post { updateDots() }
     }
 
@@ -529,6 +652,12 @@ class MainActivity : ScaledActivity() {
         main.removeCallbacks(weatherLoop)
         main.post(weatherLoop)
         loadEvents()
+        // Seiten können in den Einstellungen ein-/ausgeschaltet worden sein
+        if (pid !in pages()) showPage("uhr")
+        else {
+            medPanel?.let { if (it.visible && it.mediaStale()) it.relayout(frameView()) }
+            main.post { updateDots() }
+        }
     }
 
     override fun onPause() {
@@ -583,7 +712,10 @@ class MainActivity : ScaledActivity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         val p = podPanel
-        if (weatherPage != null) showPage(0, -1)
+        val m = medPanel
+        if (videoBox != null) closeVideo()
+        else if (weatherPage != null) showPage("uhr", -1)
+        else if (m != null && m.visible) m.back()
         else if (p != null && p.visible) p.back() else {
             @Suppress("DEPRECATION")
             super.onBackPressed()
@@ -653,7 +785,8 @@ class MainActivity : ScaledActivity() {
     private val alarmAutoEnd = Runnable { if (alarming) endAlarm(stopRadio = true) }
 
     private fun startAlarm(url: String) {
-        if (page != 0) showPage(0)
+        if (videoBox != null) closeVideo()
+        if (pid != "uhr") showPage("uhr")
         alarming = true
         main.removeCallbacks(backToNight)
         if (night) setNight(false)
@@ -755,6 +888,7 @@ class MainActivity : ScaledActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         podPanel?.let { if (it.visible) it.relayout(findViewById(R.id.frame)) }
+        medPanel?.let { if (it.visible) it.relayout(findViewById(R.id.frame)) }
         weatherPage?.relayout()
         main.post { updateDots() }
         applyOrientation(newConfig)
@@ -834,7 +968,7 @@ class MainActivity : ScaledActivity() {
         arrangeControls(cfg.orientation == Configuration.ORIENTATION_LANDSCAPE)
         val ch = when (skin.clock) {
             ClockStyle.CUCKOO -> availH
-            ClockStyle.ANALOG_BRAUN, ClockStyle.ANALOG_WOOD, ClockStyle.STATION -> minOf(ts * 2.1f, availH)
+            ClockStyle.ANALOG_BRAUN, ClockStyle.ANALOG_WOOD, ClockStyle.STATION, ClockStyle.KIDS -> minOf(ts * 2.1f, availH)
             else -> minOf(ts * 1.3f, availH)
         }
         baseTs = ts
@@ -1035,11 +1169,12 @@ class MainActivity : ScaledActivity() {
 
     private fun setNight(on: Boolean) {
         night = on
-        if (on && page != 0) {
-            page = 0
+        if (on && pid != "uhr") {
+            pid = "uhr"
             radioPage = false
             podPanel?.let { if (it.visible) it.hide(keep = true) }
-            weatherPage?.let { wp -> (wp.scroll.parent as? ViewGroup)?.removeView(wp.scroll); wp.destroy(); weatherPage = null }
+            medPanel?.let { if (it.visible) it.hide(keep = true) }
+            closeWeatherPage()
         }
         applyLook()
         updateDots()
@@ -1095,7 +1230,7 @@ class MainActivity : ScaledActivity() {
         clockView.visibility = vis(drawn)
         clockView.style = k.clock
         clockView.litColor = if (on) nightColor() else k.fg
-        clockView.alpha = if (on && (k.clock == ClockStyle.ANALOG_BRAUN || k.clock == ClockStyle.FLIP || k.clock == ClockStyle.CUCKOO || k.clock == ClockStyle.STATION)) (0.2f + 0.6f * nightLevel()).coerceAtMost(1f)
+        clockView.alpha = if (on && (k.clock == ClockStyle.ANALOG_BRAUN || k.clock == ClockStyle.FLIP || k.clock == ClockStyle.CUCKOO || k.clock == ClockStyle.STATION || k.clock == ClockStyle.KIDS)) (0.2f + 0.6f * nightLevel()).coerceAtMost(1f)
         else if (on) (0.45f + 0.55f * nightLevel()).coerceAtMost(1f) else 1f
         tvTime.typeface = Typeface.create(k.clockFamily, k.clockStyle)
         if (k.textGlow && !on) tvTime.setShadowLayer(dp(14), 0f, 0f, k.accent) else tvTime.setShadowLayer(0f, 0f, 0f, 0)
@@ -1566,6 +1701,7 @@ class MainActivity : ScaledActivity() {
         player.setWakeMode(C.WAKE_MODE_NETWORK)
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (videoMode) return
                 if (pcMode) {
                     showStationName()
                     podPanel?.refresh()
@@ -1576,8 +1712,17 @@ class MainActivity : ScaledActivity() {
             }
 
             override fun onPlaybackStateChanged(state: Int) {
+                if (videoMode) return
                 if (pcMode) {
-                    if (state == Player.STATE_ENDED) pcEp?.let { Podcast.setDone(prefs, it, true) }
+                    if (state == Player.STATE_ENDED) {
+                        pcEp?.let { Podcast.setDone(prefs, it, true) }
+                        val pp = pcPod
+                        if (isMedia(pp) && mediaQueue.isNotEmpty() && prefs.getBoolean("mediaNext", true)) {
+                            val nx = mediaQueue.first()
+                            mediaQueue = mediaQueue.drop(1)
+                            main.post { playEpisode(pp!!, nx) }
+                        }
+                    }
                     showStationName()
                     podPanel?.refresh()
                     return
@@ -1587,6 +1732,10 @@ class MainActivity : ScaledActivity() {
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                if (videoMode) {
+                    Toast.makeText(this@MainActivity, "Video kann nicht abgespielt werden", Toast.LENGTH_LONG).show()
+                    return
+                }
                 if (pcMode) {
                     tvNowPlaying.text = "Folge kann nicht abgespielt werden"
                     Toast.makeText(this@MainActivity, "Folge kann nicht abgespielt werden", Toast.LENGTH_LONG).show()
@@ -1600,7 +1749,7 @@ class MainActivity : ScaledActivity() {
             }
 
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
-                if (pcMode) return
+                if (pcMode || videoMode) return
                 val t = mediaMetadata.title?.toString()?.trim()
                 if (!t.isNullOrEmpty()) tvNowPlaying.text = t
             }
@@ -1658,7 +1807,7 @@ class MainActivity : ScaledActivity() {
         val pe = pcEp
         val pp = pcPod
         if (pcMode && pe != null && pp != null) {
-            tvStation.text = (if (pcPlaying()) "" else "▶  ") + "🎙  " + pp.title
+            tvStation.text = (if (pcPlaying()) "" else "▶  ") + (if (isMedia(pp)) "♪  " else "🎙  ") + pp.title
             tvNowPlaying.text = pe.title
             buildFavorites()
             return

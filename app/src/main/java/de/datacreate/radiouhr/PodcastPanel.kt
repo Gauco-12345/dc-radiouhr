@@ -43,10 +43,16 @@ interface PodcastHost {
     fun speed(): Float
     fun setSpeed(f: Float)
     fun accent(): Int
+    /** Bild aus der Mediathek (content://), höchstens max Pixel breit/hoch. */
+    fun localBitmap(uri: android.net.Uri, max: Int): Bitmap?
+    fun playVideo(uri: android.net.Uri, title: String)
+    /** Warteschlange für „nächste Datei automatisch“ (Mediathek). */
+    fun setQueue(q: List<Podcast.Ep>)
+    fun openSettings(tab: Int)
 }
 
 /** Vollbild-Bereich für Podcasts: Abos, Suche, Folgen, Player. */
-class PodcastPanel(private val h: PodcastHost) {
+class PodcastPanel(private val h: PodcastHost, private val media: Boolean = false) {
     private val a = h.activity
     private val d = a.resources.displayMetrics.density
     private fun dp(v: Int) = (v * d).toInt()
@@ -64,6 +70,10 @@ class PodcastPanel(private val h: PodcastHost) {
     private lateinit var tLeft: TextView
     private lateinit var bPlay: TextView
     private lateinit var bSpeed: TextView
+    private lateinit var barText: LinearLayout
+    private lateinit var ctrRow: LinearLayout
+    private lateinit var timesRow: LinearLayout
+    private var land = false
     private var dragging = false
     private var screen = "home"
     private var curPod: Podcast.Pod? = null
@@ -93,7 +103,7 @@ class PodcastPanel(private val h: PodcastHost) {
 
     fun show(frame: FrameLayout) {
         if (root != null) return
-        val land = a.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        land = a.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val r = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
@@ -114,14 +124,14 @@ class PodcastPanel(private val h: PodcastHost) {
             ellipsize = TextUtils.TruncateAt.END
         }
         head.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        head.addView(btn("Suchen", 15f) { showSearch() })
+        if (!media) head.addView(btn("Suchen", 15f) { showSearch() })
         head.addView(btn("✕", 22f) { hide() })
         r.addView(head)
 
         scroll = ScrollView(a)
         list = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(4), dp(12), dp(12))
+            setPadding(dp(12), dp(4), dp(12), dp(26))
         }
         scroll.addView(list)
         val body = LinearLayout(a).apply { orientation = if (land) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL }
@@ -130,7 +140,7 @@ class PodcastPanel(private val h: PodcastHost) {
         bar = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(col("#161B20"))
-            setPadding(dp(14), dp(10), dp(14), dp(12))
+            setPadding(dp(14), dp(10), dp(14), dp(20))
         }
         val top = LinearLayout(a).apply {
             orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
@@ -140,6 +150,7 @@ class PodcastPanel(private val h: PodcastHost) {
         if (land) top.addView(barArt, LinearLayout.LayoutParams(dp(150), dp(150)).apply { bottomMargin = dp(12) })
         else top.addView(barArt, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(10) })
         val tt = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        barText = tt
         barTitle = TextView(a).apply { textSize = 15f; setTextColor(Color.WHITE); maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
         barSub = TextView(a).apply { textSize = 12f; setTextColor(sub); setSingleLine(true); ellipsize = TextUtils.TruncateAt.END }
         tt.addView(barTitle)
@@ -170,6 +181,7 @@ class PodcastPanel(private val h: PodcastHost) {
         times.addView(tPos, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         times.addView(tLeft, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(times)
+        timesRow = times
         val ctr = LinearLayout(a).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -188,6 +200,10 @@ class PodcastPanel(private val h: PodcastHost) {
         }
         ctr.addView(bSpeed)
         bar.addView(ctr)
+        ctrRow = ctr
+        bar.addOnLayoutChangeListener { _, l, t, rr, b, ol, ot, orr, ob ->
+            if (rr - l != orr - ol || b - t != ob - ot) bar.post { fitBar() }
+        }
         if (land) {
             // links 1/3 Steuerung, rechts 2/3 Liste
             bar.gravity = Gravity.CENTER
@@ -207,7 +223,10 @@ class PodcastPanel(private val h: PodcastHost) {
         }
         root = r
         val c = h.current()
-        if (keepState) {
+        if (media) {
+            keepState = false
+            showMediaFolder()
+        } else if (keepState) {
             keepState = false
             when (screen) {
                 "episodes" -> curPod?.let { showEpisodes(it) } ?: showHome()
@@ -220,6 +239,7 @@ class PodcastPanel(private val h: PodcastHost) {
     }
 
     fun hide(keep: Boolean = false) {
+        closeViewer()
         root?.let { (it.parent as? ViewGroup)?.removeView(it) }
         root = null
         statusViews.clear()
@@ -230,6 +250,11 @@ class PodcastPanel(private val h: PodcastHost) {
     }
 
     fun back() {
+        if (viewer != null) { closeViewer(); return }
+        if (media) {
+            if (folders.size > 1) { folders.removeAt(folders.size - 1); showMediaFolder() } else hide()
+            return
+        }
         when (screen) {
             "home" -> hide()
             "results" -> showSearch()
@@ -258,7 +283,7 @@ class PodcastPanel(private val h: PodcastHost) {
             setColor(if (big) h.accent() else col("#2A3138"))
         }
         val s = if (big) dp(64) else dp(52)
-        layoutParams = LinearLayout.LayoutParams(s, s).apply { setMargins(dp(10), 0, dp(10), 0) }
+        layoutParams = LinearLayout.LayoutParams(s, s).apply { setMargins(dp(6), 0, dp(6), 0) }
         setOnClickListener { onClick() }
     }
 
@@ -545,7 +570,243 @@ class PodcastPanel(private val h: PodcastHost) {
         scroll.post { scroll.scrollTo(0, y) }
     }
 
+    // ------------------------------------------------------------ Mediathek
+
+    /** Ordnerpfad: (docId, Name); erstes Element = gewählter Hauptordner. */
+    private val folders = ArrayList<Pair<String, String>>()
+    private var mediaTree = ""
+    private val coverCache = java.util.concurrent.ConcurrentHashMap<String, android.net.Uri>()
+    private var viewer: View? = null
+
+    /** Wurde in den Einstellungen ein anderer Mediathek-Ordner gewählt? */
+    fun mediaStale() = media && (h.prefs.getString("mediaTree", "") ?: "") != mediaTree
+
+    private fun showMediaFolder() {
+        screen = "media"
+        list.removeAllViews()
+        val tree = h.prefs.getString("mediaTree", "") ?: ""
+        if (tree.isEmpty()) {
+            title.text = "Mediathek"
+            msg("Noch kein Ordner gewählt.\n\nIn den Einstellungen unter „Mediathek“ einen Ordner wählen, z. B. „Hörspiele“ mit Unterordnern wie „Pippi Langstrumpf“. Darin können MP3s, Videos, Bilder und PDFs liegen.")
+            list.addView(btn("Ordner wählen …", 17f) { h.openSettings(9) }.apply {
+                setTextColor(Color.BLACK)
+                background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(h.accent()) }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(8)
+            })
+            return
+        }
+        if (tree != mediaTree || folders.isEmpty()) {
+            mediaTree = tree
+            folders.clear()
+            coverCache.clear()
+            val rid = try { Media.rootId(tree) } catch (_: Exception) { "" }
+            folders.add(rid to "Mediathek")
+        }
+        val (docId, name) = folders.last()
+        title.text = if (folders.size == 1) "Mediathek" else name
+        scroll.scrollTo(0, 0)
+        msg("Lade …")
+        h.io {
+            val items = try { Media.list(a, tree, docId) } catch (e: Exception) {
+                h.ui {
+                    if (screen != "media") return@ui
+                    list.removeAllViews()
+                    msg("Ordner nicht lesbar – bitte in den Einstellungen neu wählen.\n(${e.message})")
+                }
+                return@io
+            }
+            h.ui { if (screen == "media" && folders.lastOrNull()?.first == docId) renderMedia(items) }
+        }
+    }
+
+    private fun renderMedia(items: List<Media.Item>) {
+        list.removeAllViews()
+        val dirs = items.filter { it.dir }
+        val cover = Media.cover(items)
+        val files = items.filter { !it.dir && it !== cover }
+        if (items.isEmpty()) msg("Dieser Ordner ist leer.")
+        val big = h.prefs.getBoolean("mediaBig", true)
+        if (dirs.isNotEmpty()) {
+            if (big) tiles(dirs) else for (d in dirs) {
+                val rw = row("", "📁  " + d.name, "", onClick = { open(d) })
+                rw.minimumHeight = dp(56)
+            }
+        }
+        val audio = files.filter { it.kind == "audio" }
+        val pod = Podcast.Pod("media:" + folders.last().first, folders.last().second, "Mediathek", "")
+        val eps = audio.map { epOf(it) }
+        val cur = h.current()
+        for (f in files) {
+            val icon = when (f.kind) { "audio" -> "♪"; "video" -> "🎬"; "image" -> "🖼"; else -> "📄" }
+            val info = StringBuilder(Media.sizeLabel(f.size))
+            if (f.kind == "audio") {
+                val ep = epOf(f)
+                val pos = Podcast.pos(h.prefs, ep)
+                when {
+                    cur?.second?.url == ep.url -> info.append(" · ▶ läuft")
+                    Podcast.done(h.prefs, ep) -> info.append(" · ✓ gehört")
+                    pos > 0 -> info.append(" · bei ").append(Podcast.fmtTime(pos))
+                }
+            }
+            val rw = row("", f.title, info.toString(), onClick = {
+                when (f.kind) {
+                    "audio" -> {
+                        val i = audio.indexOf(f)
+                        h.setQueue(eps.drop(i + 1))
+                        h.play(pod, eps[i])
+                        renderMedia(items)
+                    }
+                    "video" -> h.playVideo(f.uri, f.title)
+                    "image" -> showImage(f)
+                    else -> openDoc(f)
+                }
+            }, onLong = if (f.kind == "audio") ({
+                val ep = epOf(f)
+                Podcast.setDone(h.prefs, ep, !Podcast.done(h.prefs, ep))
+                renderMedia(items)
+            }) else null)
+            rw.addView(TextView(a).apply {
+                text = icon
+                textSize = 20f
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER
+                setPadding(dp(10), 0, dp(4), 0)
+            }, 0)
+        }
+    }
+
+    private fun epOf(f: Media.Item) = Podcast.Ep(f.docId, f.title, 0L, f.uri.toString(), 0L, "")
+
+    private fun open(d: Media.Item) {
+        folders.add(d.docId to d.name)
+        showMediaFolder()
+    }
+
+    /** Große Bild-Kacheln für Unterordner (für Kinder gut zu treffen). */
+    private fun tiles(dirs: List<Media.Item>) {
+        val cols = if (land) 4 else 2
+        val tileH = dp(if (land) 150 else 170)
+        var r: LinearLayout? = null
+        dirs.forEachIndexed { i, d ->
+            if (i % cols == 0) {
+                r = LinearLayout(a).apply { orientation = LinearLayout.HORIZONTAL }
+                list.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, tileH).apply { setMargins(0, dp(4), 0, dp(4)) })
+            }
+            val t = FrameLayout(a).apply {
+                background = GradientDrawable().apply { cornerRadius = dp(16).toFloat(); setColor(tileColor(d.name)) }
+                clipToOutline = true
+                setOnClickListener { open(d) }
+            }
+            val iv = ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+            val ph = TextView(a).apply {
+                text = d.name.trim().take(1).uppercase(Locale.GERMANY)
+                textSize = 48f
+                setTextColor(Color.argb(150, 255, 255, 255))
+                gravity = Gravity.CENTER
+            }
+            t.addView(ph, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            t.addView(iv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            t.addView(TextView(a).apply {
+                text = d.name
+                textSize = 16f
+                setTextColor(Color.WHITE)
+                maxLines = 2
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(dp(10), dp(6), dp(10), dp(8))
+                setBackgroundColor(Color.argb(150, 0, 0, 0))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+            r!!.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
+            loadCover(d, iv)
+        }
+        val rest = (cols - dirs.size % cols) % cols
+        repeat(rest) { r?.addView(View(a), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(dp(4), 0, dp(4), 0) }) }
+    }
+
+    private fun tileColor(name: String): Int {
+        val c = intArrayOf(col("#E4572E"), col("#29A3A3"), col("#F3A712"), col("#6A4C93"), col("#4CAF50"), col("#1E88E5"), col("#D81B60"), col("#8D6E63"))
+        return c[Math.abs(name.hashCode()) % c.size]
+    }
+
+    private fun loadCover(d: Media.Item, iv: ImageView) {
+        iv.tag = d.docId
+        h.io {
+            val u = coverCache[d.docId] ?: run {
+                val c = try { Media.cover(Media.list(a, mediaTree, d.docId))?.uri } catch (_: Exception) { null }
+                (c ?: android.net.Uri.EMPTY).also { coverCache[d.docId] = it }
+            }
+            val b = if (u == android.net.Uri.EMPTY) null else h.localBitmap(u, 400)
+            if (b != null) h.ui { if (iv.tag == d.docId) iv.setImageBitmap(b) }
+        }
+    }
+
+    private fun openDoc(f: Media.Item) {
+        try {
+            a.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW)
+                .setDataAndType(f.uri, f.mime.ifEmpty { "*/*" })
+                .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        } catch (_: Exception) {
+            Toast.makeText(a, "Keine App zum Öffnen von „${f.name}“ gefunden", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun showImage(f: Media.Item) {
+        val fr = root ?: return
+        val box = FrameLayout(a).apply {
+            setBackgroundColor(Color.BLACK)
+            isClickable = true
+            setOnClickListener { closeViewer() }
+        }
+        val iv = ImageView(a).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+        box.addView(iv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        box.addView(btn("✕", 26f) { closeViewer() }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END))
+        (fr.parent as? ViewGroup)?.addView(box, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        viewer = box
+        h.io {
+            val b = h.localBitmap(f.uri, 2048)
+            h.ui { if (viewer === box) { if (b != null) iv.setImageBitmap(b) else { closeViewer(); openDoc(f) } } }
+        }
+    }
+
+    private fun closeViewer() {
+        viewer?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        viewer = null
+    }
+
     // ------------------------------------------------------------ Player-Leiste
+
+    /** Tasten und Bild so verkleinern, dass im schmalen/niedrigen Bereich nichts abgeschnitten wird. */
+    private fun fitBar() {
+        if (root == null || bar.width == 0) return
+        val w = bar.width - bar.paddingLeft - bar.paddingRight
+        val m = dp(6)
+        // 3 kleine + 1 große Taste (1,25×) + 8 Ränder
+        val small = ((w - 8 * m) / 4.25f).toInt().coerceIn(dp(34), dp(52))
+        val big = (small * 1.25f).toInt()
+        for (n in 0 until ctrRow.childCount) {
+            val v = ctrRow.getChildAt(n) as TextView
+            val s = if (v === bPlay) big else small
+            val lp = v.layoutParams as LinearLayout.LayoutParams
+            if (lp.width != s) {
+                lp.width = s; lp.height = s
+                v.layoutParams = lp
+                v.textSize = (if (v === bPlay) 24f else 15f) * s / (if (v === bPlay) dp(64) else dp(52)).toFloat()
+            }
+        }
+        if (!land) return
+        // Querformat: Coverbild nur so groß, wie Platz ist
+        val inner = bar.height - bar.paddingTop - bar.paddingBottom
+        val need = barText.height + dp(42) + timesRow.height + big + dp(6) + dp(12)
+        val free = inner - need
+        val lp = barArt.layoutParams as LinearLayout.LayoutParams
+        val s = free.coerceAtMost(dp(150))
+        val want = if (s < dp(44)) 0 else s
+        if (lp.width != want) {
+            lp.width = want; lp.height = want
+            barArt.visibility = if (want == 0) View.GONE else View.VISIBLE
+            barArt.layoutParams = lp
+        }
+    }
 
     fun refresh() {
         if (root == null) return

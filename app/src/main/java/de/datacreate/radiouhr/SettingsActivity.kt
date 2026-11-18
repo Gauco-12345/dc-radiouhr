@@ -45,12 +45,13 @@ class SettingsActivity : ScaledActivity() {
     private var tab = 0
     private lateinit var tabBox: LinearLayout
     private lateinit var scroll: ScrollView
-    private val TABS = listOf("Darstellung", "Wetter", "Netatmo", "Wecker", "Nacht", "Radio & Termine", "Sichern & Update")
+    private val TABS = listOf("Darstellung", "Seiten", "Wetter", "Netatmo", "Wecker", "Nacht", "Radio", "Podcast", "Termine", "Mediathek", "Sichern & Update")
+    private fun t(name: String) = TABS[tab] == name
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = Wx.prefs(this)
-        tab = savedInstanceState?.getInt("tab", 0) ?: intent.getIntExtra("tab", 0)
+        tab = (savedInstanceState?.getInt("tab", 0) ?: intent.getIntExtra("tab", 0)).coerceIn(0, TABS.size - 1)
         setupFrame()
     }
 
@@ -276,7 +277,7 @@ class SettingsActivity : ScaledActivity() {
         var c: LinearLayout
 
         // Darstellung
-        if (tab == 0) {
+        if (t("Darstellung")) {
         section("Darstellung")
         c = card()
         val skins = Skins.all
@@ -294,7 +295,8 @@ class SettingsActivity : ScaledActivity() {
             "ANALOG_BRAUN" to "Zeiger, Bauhaus",
             "STATION" to "Bahnhofsuhr",
             "ANALOG_WOOD" to "Zeiger, Holz",
-            "CUCKOO" to "Kuckucksuhr"
+            "CUCKOO" to "Kuckucksuhr",
+            "KIDS" to "Lernuhr (Kinder)"
         )
         val cur = prefs.getString("clockStyle", "") ?: ""
         spinner(c, "Uhrenart", clocks.map { it.second }, maxOf(0, clocks.indexOfFirst { it.first == cur })) {
@@ -307,12 +309,6 @@ class SettingsActivity : ScaledActivity() {
             main.post { recreate() }
         }
         c.addView(small("„automatisch“ passt alles an die Bildschirmgröße an (Handy, 8-Zoll-Tablet …). Mit % feiner einstellen."))
-        val pages = listOf("uhr", "radio", "podcast", "wetter")
-        spinner(c, "Startseite", listOf("Uhr", "Radio", "Podcast", "Wetter"), maxOf(0, pages.indexOf(prefs.getString("startPage", "uhr")))) {
-            prefs.edit().putString("startPage", pages[it]).apply()
-        }
-        check(c, "Seiten wischen (Uhr · Radio · Podcast · Wetter)", "pagesOn", true,
-            "Nach links/rechts wischen wechselt die Seite; die Punkte unten zeigen, wo du bist.")
         val favStyles = listOf("auto", "list")
         spinner(c, "Senderleiste", listOf("Kacheln (wie Design)", "Liste: Logo + Name"), maxOf(0, favStyles.indexOf(prefs.getString("favStyle", "auto")))) {
             prefs.edit().putString("favStyle", favStyles[it]).apply()
@@ -326,7 +322,7 @@ class SettingsActivity : ScaledActivity() {
         }
 
         }
-        if (tab == 1) {
+        if (t("Wetter")) {
         // Wetter
         section("Wetter")
         c = card()
@@ -360,7 +356,7 @@ class SettingsActivity : ScaledActivity() {
         c.addView(small("Antippen von Wetter oder Temperatur öffnet die ausführliche Wetterseite."))
 
         }
-        if (tab == 2) {
+        if (t("Netatmo")) {
         // Netatmo
         section("Netatmo-Wetterstation")
         c = card()
@@ -400,7 +396,7 @@ class SettingsActivity : ScaledActivity() {
         }
 
         }
-        if (tab == 5) {
+        if (t("Termine")) {
         // Termine
         section("Termine")
         c = card()
@@ -499,7 +495,7 @@ class SettingsActivity : ScaledActivity() {
         }
 
         }
-        if (tab == 4) {
+        if (t("Nacht")) {
         // Nacht
         section("Nachtmodus")
         c = card()
@@ -552,7 +548,7 @@ class SettingsActivity : ScaledActivity() {
         }
 
         }
-        if (tab == 3) {
+        if (t("Wecker")) {
         // Wecker
         section("Radiowecker")
         c = card()
@@ -595,29 +591,57 @@ class SettingsActivity : ScaledActivity() {
         }
 
         }
-        if (tab == 5) {
-        // Podcasts
+        if (t("Podcast")) {
         section("Podcasts")
         c = card()
         val autoIds = listOf("off", "wifi", "always")
         spinner(c, "Neue Folgen automatisch laden", listOf("aus", "nur im WLAN", "immer"), maxOf(0, autoIds.indexOf(prefs.getString("pcAuto", "off")))) {
             prefs.edit().putString("pcAuto", autoIds[it]).apply()
         }
-        val cnt = listOf(1, 2, 3, 5)
-        spinner(c, "Neueste Folgen je Abo", cnt.map { "$it" }, maxOf(0, cnt.indexOf(prefs.getInt("pcAutoCount", 1)))) {
+        val cnt = (1..10).toList() + listOf(15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100) + (200..1000 step 100).toList()
+        val curCnt = prefs.getInt("pcAutoCount", 1)
+        spinner(c, "Neueste Folgen je Abo", cnt.map { "$it" }, maxOf(0, cnt.indexOfFirst { it >= curCnt })) {
             prefs.edit().putInt("pcAutoCount", cnt[it]).apply()
         }
         check(c, "Gehörte Downloads automatisch löschen", "pcAutoDelete", false)
-        c.addView(small("Die App schaut stündlich nach neuen Folgen deiner Abos. Bereits gehörte Folgen werden nicht geladen."))
-
-        // Radio
+        c.addView(small("Die App schaut stündlich nach neuen Folgen deiner Abos. Bereits gehörte Folgen werden nicht geladen. Viele Folgen brauchen viel Speicher – eine Folge hat meist 20–80 MB."))
+        }
+        if (t("Radio")) {
         section("Radio")
         c = card()
         check(c, "Beim Start automatisch abspielen", "autoplay", false)
         c.addView(small("Sender hinzufügen: ＋ auf der Startseite. Entfernen: Sender lange drücken."))
-
         }
-        if (tab == 6) {
+        if (t("Seiten")) {
+        section("Seiten")
+        c = card()
+        check(c, "Seiten wischen", "pagesOn", true,
+            "Nach links/rechts wischen wechselt die Seite; die Punkte unten zeigen, wo du bist.")
+        c = card()
+        c.addView(small("Diese Seiten anzeigen (die Uhr ist immer da):"))
+        for ((id, name) in Pages.ALL.drop(1)) check(c, name, "page_$id", true) { build() }
+        val act = Pages.active(prefs)
+        spinner(c, "Startseite", act.map { Pages.name(it) }, maxOf(0, act.indexOf(prefs.getString("startPage", "uhr")))) {
+            prefs.edit().putString("startPage", act[it]).apply()
+        }
+        }
+        if (t("Mediathek")) {
+        section("Mediathek")
+        c = card()
+        c.addView(small("Ein Ordner auf dem Gerät oder der SD-Karte mit Unterordnern, z. B. „Pippi Langstrumpf“, darin MP3s, Videos, Bilder oder PDFs. Ein Bild „cover.jpg“ oder „folder.jpg“ im Ordner wird als Kachel-Bild benutzt."))
+        val tree = prefs.getString("mediaTree", "") ?: ""
+        button(c, if (tree.isEmpty()) "Ordner wählen …" else "Anderen Ordner wählen …",
+            if (tree.isEmpty()) "noch kein Ordner gewählt" else Media.label(tree)) { pickMediaFolder() }
+        if (tree.isNotEmpty()) {
+            check(c, "Nächste Datei im Ordner automatisch abspielen", "mediaNext", true)
+            check(c, "Große Kacheln (kinderfreundlich)", "mediaBig", true)
+            button(c, "Ordner entfernen") {
+                prefs.edit().remove("mediaTree").apply()
+                build()
+            }
+        }
+        }
+        if (t("Sichern & Update")) {
         // Update
         section("Update")
         c = card()
@@ -879,11 +903,24 @@ class SettingsActivity : ScaledActivity() {
 
     // ------------------------------------------------------------ Export / Import
 
+    private val REQ_MEDIA = 43
+
+    private fun pickMediaFolder() {
+        try {
+            val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            @Suppress("DEPRECATION")
+            startActivityForResult(i, REQ_MEDIA)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Ordnerauswahl auf diesem Gerät nicht möglich", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private val REQ_EXPORT = 41
     private val REQ_IMPORT = 42
 
     /** Zwischenspeicher, die nicht mitgenommen werden (werden neu geladen). */
-    private val SKIP = setOf("wxJson", "wxTime", "metaJson", "metaTime", "lastFire", "snoozeAt", "snoozeStation", "gpsName")
+    private val SKIP = setOf("wxJson", "wxTime", "metaJson", "metaTime", "lastFire", "snoozeAt", "snoozeStation", "gpsName", "mediaTree")
 
     private fun exportData() {
         val name = "DC-Radiouhr-" + SimpleDateFormat("yyyy-MM-dd", Locale.GERMANY).format(Date()) + ".json"
@@ -968,7 +1005,14 @@ class SettingsActivity : ScaledActivity() {
         val uri = data?.data
         if (resultCode != RESULT_OK || uri == null) return
         try {
-            if (requestCode == REQ_EXPORT) {
+            if (requestCode == REQ_MEDIA) {
+                try {
+                    contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                } catch (_: Exception) {
+                }
+                prefs.edit().putString("mediaTree", uri.toString()).apply()
+                build()
+            } else if (requestCode == REQ_EXPORT) {
                 contentResolver.openOutputStream(uri, "wt")?.use { it.write(buildExport().toByteArray(Charsets.UTF_8)) }
                 Toast.makeText(this, "Exportiert", Toast.LENGTH_LONG).show()
             } else if (requestCode == REQ_IMPORT) {

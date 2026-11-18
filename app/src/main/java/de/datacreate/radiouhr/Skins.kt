@@ -4,10 +4,10 @@ import android.graphics.Color
 import android.graphics.Typeface
 
 enum class Presets { ROW, GRID, KEYS, NONE }
-enum class ClockStyle { TEXT, NIXIE, SEGMENT, FLIP, ANALOG_BRAUN, ANALOG_WOOD, CUCKOO, STATION }
+enum class ClockStyle { TEXT, NIXIE, SEGMENT, FLIP, ANALOG_BRAUN, ANALOG_WOOD, CUCKOO, STATION, KIDS }
 enum class BtnStyle { FLAT, IVORY, KEYPAD, LCD, NEON, GLASS, ROUND, WOOD, NONE, OUTLINE }
 enum class KnobStyle { MODERN, BAKELITE, LED, NEON, THIN, BRAUN, WOOD, GLASS }
-enum class BgStyle { PLAIN, WOOD, DARKWOOD, METAL, SYNTH, WAVES, MOUNTAINS, PAPER, CONCRETE }
+enum class BgStyle { PLAIN, WOOD, DARKWOOD, METAL, SYNTH, WAVES, MOUNTAINS, PAPER, CONCRETE, MEADOW }
 enum class PanelStyle { NONE, GRILLE, BEZEL, GLASS }
 enum class StationStyle { TEXT, DIAL, LCD }
 
@@ -136,6 +136,15 @@ object Skins {
             col("#0B1530"), col("#1C2B4A"), col("#F4F6FF"), col("#A9B6D6"), col("#F3D27A"), col("#F3D27A"), col("#A9C8E8"),
             col("#22FFFFFF"), col("#44FFFFFF"), col("#40FFFFFF"), 18f, col("#14203C"), col("#33F3D27A"),
             btn = BtnStyle.GLASS, knob = KnobStyle.GLASS, bg = BgStyle.MOUNTAINS, iconTint = col("#F4F6FF")
+        ),
+        Skin(
+            "kinder", "Kinderzimmer", "bunte Lernuhr, Himmel mit Sonne und Wolken, große runde Tasten",
+            col("#7EC8F2"), col("#CDEBFA"), col("#1F2A44"), col("#3D5170"), col("#FF7A1A"), col("#FFB000"), col("#2B7BB9"),
+            col("#FFFFFF"), col("#33000000"), col("#FFE7C2"), 30f, col("#FFD23F"), col("#55FF7A1A"),
+            clockFamily = "sans-serif-medium", textFamily = "sans-serif-medium",
+            presets = Presets.GRID, events = true,
+            clock = ClockStyle.KIDS, btn = BtnStyle.ROUND, knob = KnobStyle.BRAUN, bg = BgStyle.MEADOW,
+            iconTint = col("#1F2A44")
         )
     )
 

@@ -60,6 +60,7 @@ class ClockView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = n
             ClockStyle.ANALOG_BRAUN -> braun(canvas)
             ClockStyle.ANALOG_WOOD -> woodClock(canvas)
             ClockStyle.STATION -> station(canvas)
+            ClockStyle.KIDS -> kids(canvas)
             ClockStyle.CUCKOO -> {
                 cuckoo(canvas)
                 postInvalidateDelayed(50)
@@ -308,6 +309,69 @@ class ClockView @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? = n
         c.drawLine(cx - sx * tail, cy - cy2 * tail, cx + sx * len, cy + cy2 * len, p)
         p.style = Paint.Style.FILL
     }
+
+    /** Lernuhr für Kinder: bunte Stundenfelder, Minuten außen, roter kurzer und blauer langer Zeiger. */
+    private fun kids(c: Canvas) {
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = min(width, height) / 2f - 4 * d
+        p.style = Paint.Style.FILL
+        p.color = col("#33000000")
+        c.drawCircle(cx, cy + 4 * d, r, p)
+        p.color = col("#FFD23F")
+        c.drawCircle(cx, cy, r, p)
+        p.color = Color.WHITE
+        c.drawCircle(cx, cy, r * 0.86f, p)
+        // bunte Stundenfelder
+        val cols = intArrayOf(col("#FF6B6B"), col("#FFA94D"), col("#FFD43B"), col("#69DB7C"), col("#38D9A9"), col("#4DABF7"),
+            col("#748FFC"), col("#B197FC"), col("#F783AC"), col("#FF8787"), col("#A9E34B"), col("#66D9E8"))
+        val oval = RectF(cx - r * 0.86f, cy - r * 0.86f, cx + r * 0.86f, cy + r * 0.86f)
+        for (n in 0 until 12) {
+            p.color = alpha(cols[n], 70)
+            c.drawArc(oval, n * 30f - 90f - 15f + 30f, 30f, true, p)
+        }
+        p.color = Color.WHITE
+        c.drawCircle(cx, cy, r * 0.42f, p)
+        // Minuten-Zahlen außen (5, 10 … 60) auf dem gelben Ring
+        tp.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        tp.clearShadowLayer()
+        tp.textSize = r * 0.075f
+        tp.color = col("#7A5B00")
+        for (n in 1..12) {
+            val a = Math.toRadians(n * 30.0)
+            val tx = cx + sin(a).toFloat() * r * 0.93f
+            val ty = cy - cos(a).toFloat() * r * 0.93f - (tp.descent() + tp.ascent()) / 2f
+            c.drawText((n * 5).toString(), tx, ty, tp)
+        }
+        // Minutenstriche
+        p.style = Paint.Style.STROKE
+        for (i in 0 until 60) {
+            val a = Math.toRadians(i * 6.0)
+            val l1 = r * (if (i % 5 == 0) 0.79f else 0.83f)
+            p.strokeWidth = if (i % 5 == 0) r * 0.02f else r * 0.008f
+            p.color = col("#55333333")
+            c.drawLine(cx + sin(a).toFloat() * l1, cy - cos(a).toFloat() * l1,
+                cx + sin(a).toFloat() * r * 0.86f, cy - cos(a).toFloat() * r * 0.86f, p)
+        }
+        p.style = Paint.Style.FILL
+        // große Stundenzahlen
+        tp.textSize = r * 0.17f
+        tp.typeface = Typeface.create("sans-serif-black", Typeface.NORMAL)
+        for (n in 1..12) {
+            val a = Math.toRadians(n * 30.0)
+            val tx = cx + sin(a).toFloat() * r * 0.63f
+            val ty = cy - cos(a).toFloat() * r * 0.63f - (tp.descent() + tp.ascent()) / 2f
+            tp.color = darker(cols[n - 1])
+            c.drawText(n.toString(), tx, ty, tp)
+        }
+        hand(c, cx, cy, (hh % 12 + mm / 60f) * 30f, r * 0.45f, r * 0.06f, r * 0.075f, col("#E03131"))
+        hand(c, cx, cy, (mm + ss / 60f) * 6f, r * 0.74f, r * 0.06f, r * 0.05f, col("#1971C2"))
+        hand(c, cx, cy, ss * 6f, r * 0.78f, r * 0.12f, r * 0.012f, col("#2B8A3E"))
+        p.color = col("#1F2A44")
+        c.drawCircle(cx, cy, r * 0.05f, p)
+    }
+
+    private fun darker(c: Int): Int = Color.rgb((Color.red(c) * 0.6f).toInt(), (Color.green(c) * 0.6f).toInt(), (Color.blue(c) * 0.6f).toInt())
 
     private fun braun(c: Canvas) {
         val cx = width / 2f
