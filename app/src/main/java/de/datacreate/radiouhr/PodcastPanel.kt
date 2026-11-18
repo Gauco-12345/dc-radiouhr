@@ -49,8 +49,6 @@ interface PodcastHost {
     /** Warteschlange für „nächste Datei automatisch“ (Mediathek). */
     fun setQueue(q: List<Podcast.Ep>)
     fun openSettings(tab: Int)
-    fun locked(): Boolean
-    fun guard(action: () -> Unit)
 }
 
 /** Vollbild-Bereich für Podcasts: Abos, Suche, Folgen, Player. */
@@ -126,7 +124,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             ellipsize = TextUtils.TruncateAt.END
         }
         head.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        if (!media) head.addView(btn("Suchen", 15f) { h.guard { showSearch() } })
+        if (!media) head.addView(btn("Suchen", 15f) { showSearch() })
         head.addView(btn("✕", 22f) { hide() })
         r.addView(head)
 
@@ -355,7 +353,6 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         title.text = "Podcasts"
         list.removeAllViews()
         scroll.scrollTo(0, 0)
-        resumeCard()
         val subs = Podcast.subs(h.prefs)
         val dls = Podcast.downloads(a, h.prefs)
         if (dls.isNotEmpty()) {
@@ -370,11 +367,9 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                     h.play(pod, ep)
                     refresh()
                 }, onLong = {
-                    h.guard {
-                        Podcast.deleteDownload(a, h.prefs, ep)
-                        Toast.makeText(a, "Download gelöscht", Toast.LENGTH_SHORT).show()
-                        showHome()
-                    }
+                    Podcast.deleteDownload(a, h.prefs, ep)
+                    Toast.makeText(a, "Download gelöscht", Toast.LENGTH_SHORT).show()
+                    showHome()
                 })
             }
         }
@@ -389,13 +384,13 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             setPadding(dp(6), dp(8), 0, dp(4))
         })
         for (p in subs) {
-            row(p.art, p.title, p.author, onClick = { showEpisodes(p) }, onLong = { h.guard {
+            row(p.art, p.title, p.author, onClick = { showEpisodes(p) }, onLong = {
                 android.app.AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
                     .setMessage("„${p.title}“ abbestellen?")
                     .setPositiveButton("Abbestellen") { _, _ -> Podcast.toggleSub(h.prefs, p); showHome() }
                     .setNegativeButton("Abbrechen", null)
                     .show()
-            } })
+            })
         }
     }
 
@@ -627,7 +622,6 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
 
     private fun renderMedia(items: List<Media.Item>) {
         list.removeAllViews()
-        if (folders.size == 1) resumeCard()
         val dirs = items.filter { it.dir }
         val cover = Media.cover(items)
         val files = items.filter { !it.dir && it !== cover }
@@ -777,35 +771,6 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     private fun closeViewer() {
         viewer?.let { (it.parent as? ViewGroup)?.removeView(it) }
         viewer = null
-    }
-
-    /** Große „Weiterhören“-Karte mit der zuletzt gespielten Folge bzw. dem Hörspiel. */
-    private fun resumeCard() {
-        val c = h.current() ?: return
-        val isMed = c.first.feed.startsWith("media:")
-        if (isMed != media || Podcast.done(h.prefs, c.second)) return
-        val pos = h.position()
-        val playing = h.isPlaying()
-        list.addView(TextView(a).apply {
-            text = if (playing) "LÄUFT GERADE" else "WEITERHÖREN"
-            textSize = 12f
-            setTextColor(h.accent())
-            setPadding(dp(6), dp(8), 0, dp(4))
-        })
-        val rw = row(c.second.art.ifEmpty { c.first.art }, c.second.title,
-            c.first.title + if (pos > 0) " · bei " + Podcast.fmtTime(pos) else "", onClick = {
-                if (!h.isPlaying()) h.toggle()
-                refresh()
-            })
-        (rw.background as? GradientDrawable)?.setStroke(dp(2), h.accent())
-        rw.addView(TextView(a).apply {
-            text = if (playing) "❚❚" else "▶"
-            textSize = 22f
-            setTextColor(Color.BLACK)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(h.accent()) }
-            setOnClickListener { h.toggle(); refresh(); if (media) showMediaFolder() else showHome() }
-        }, LinearLayout.LayoutParams(dp(52), dp(52)))
     }
 
     // ------------------------------------------------------------ Player-Leiste
