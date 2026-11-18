@@ -302,6 +302,12 @@ class MainActivity : ScaledActivity() {
 
     /** Vorschaubild mit Datei-Zwischenspeicher (Cover großer Sammlungen laden schnell). */
     private fun decodeLocal(uri: android.net.Uri, max: Int): Bitmap? {
+        val key = uri.toString() + "@" + max
+        bmpCache.get(key)?.let { return it }
+        return decodeLocalDisk(uri, max)?.also { bmpCache.put(key, it) }
+    }
+
+    private fun decodeLocalDisk(uri: android.net.Uri, max: Int): Bitmap? {
         val f = java.io.File(java.io.File(cacheDir, "thumbs").apply { mkdirs() },
             Integer.toHexString((uri.toString() + "@" + max).hashCode()) + ".jpg")
         if (f.exists()) BitmapFactory.decodeFile(f.path)?.let { return it }
@@ -2385,7 +2391,17 @@ class MainActivity : ScaledActivity() {
         } catch (_: Exception) { "" }
     }
 
+    /** Bilder im Arbeitsspeicher (begrenzt), damit Listen beim Scrollen/Wischen nicht neu dekodieren. */
+    private val bmpCache = object : android.util.LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 16).toInt()) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
+
     private fun loadBitmap(url: String): Bitmap? {
+        bmpCache.get(url)?.let { return it }
+        return loadBitmapRaw(url)?.also { bmpCache.put(url, it) }
+    }
+
+    private fun loadBitmapRaw(url: String): Bitmap? {
         val f = File(cacheDir, "ic_" + Integer.toHexString(url.hashCode()))
         try {
             val bytes = if (f.exists()) f.readBytes() else {

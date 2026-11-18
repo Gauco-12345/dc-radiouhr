@@ -99,12 +99,33 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     /** Nach dem Drehen neu aufbauen und die aktuelle Seite behalten. */
     fun relayout(frame: FrameLayout) {
         hide(keep = true)
+        parked = null
         keepState = true
         show(frame)
     }
 
+    /** Beim Wegwischen behaltene Ansicht – Zurückwischen baut nichts neu auf (schont langsame Geräte). */
+    private var parked: View? = null
+    private var parkedKey = ""
+
+    private fun viewKey() = "" + a.resources.configuration.orientation + "|" + h.skin().id + "|" + a.resources.configuration.screenWidthDp
+
     fun show(frame: FrameLayout) {
         if (root != null) return
+        val pv = parked
+        if (pv != null && parkedKey == viewKey() && !(media && mediaStale())) {
+            parked = null
+            (pv.parent as? ViewGroup)?.removeView(pv)
+            frame.addView(pv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            root = pv as LinearLayout
+            pv.translationX = 0f
+            pv.alpha = 1f
+            pv.requestFocus()
+            refresh()
+            updateBack()
+            return
+        }
+        parked = null
         land = a.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
         L = Look(h.skin())
         val r = LinearLayout(a).apply {
@@ -186,9 +207,10 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
 
     fun hide(keep: Boolean = false) {
         closeViewer()
-        root?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        val r = root
+        r?.let { (it.parent as? ViewGroup)?.removeView(it) }
         root = null
-        statusViews.clear()
+        if (keep && r != null) { parked = r; parkedKey = viewKey() } else { parked = null; statusViews.clear() }
         if (!keep) {
             screen = "home"
             onClose?.invoke()
