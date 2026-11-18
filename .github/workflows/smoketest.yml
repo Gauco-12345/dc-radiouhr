@@ -36,9 +36,25 @@ jobs:
             adb logcat -c
             adb shell am start -n de.datacreate.radiouhr/.MainActivity
             sleep 20
+            adb shell input swipe 900 1200 150 1200 150
+            sleep 3
+            adb shell input swipe 900 1200 150 1200 150
+            sleep 4
+            adb shell input swipe 900 1200 150 1200 150
+            sleep 4
+            adb shell input swipe 900 1200 150 1200 150
+            sleep 3
+            adb shell input swipe 150 1200 900 1200 150
+            sleep 3
             adb shell settings put system accelerometer_rotation 0
             adb shell settings put system user_rotation 1
-            sleep 10
+            sleep 6
+            adb shell input swipe 1800 600 300 600 150
+            sleep 3
+            adb shell input swipe 1800 600 300 600 150
+            sleep 4
+            adb shell input swipe 1800 600 300 600 150
+            sleep 4
             adb shell am start -n de.datacreate.radiouhr/.SettingsActivity || true
             sleep 5
             adb logcat -d -b crash > crash.txt || true
