@@ -58,11 +58,14 @@ object Podcast {
             .toString()).apply()
     }
 
-    fun last(p: SharedPreferences): Pair<Pod, Ep>? = try {
-        val o = JSONObject(p.getString("pcLast", null) ?: return null)
+    fun last(p: SharedPreferences): Pair<Pod, Ep>? {
+        val raw = p.getString("pcLast", null) ?: return null
+        return try {
+        val o = JSONObject(raw)
         Pod(o.optString("feed"), o.optString("ptitle"), o.optString("author"), o.optString("part")) to
             Ep(o.optString("id"), o.optString("title"), o.optLong("date"), o.optString("url"), o.optLong("dur"), o.optString("art"))
-    } catch (_: Exception) { null }
+        } catch (_: Exception) { null }
+    }
 
     // ------------------------------------------------------------ Suche
 
