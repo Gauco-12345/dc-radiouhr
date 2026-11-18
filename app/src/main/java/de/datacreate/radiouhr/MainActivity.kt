@@ -131,6 +131,8 @@ class MainActivity : ScaledActivity() {
     private var podPanel: PodcastPanel? = null
 
     private val podHost = object : PodcastHost {
+        override fun skin(): Skin = this@MainActivity.skin
+        override fun loadNew(done: (Int) -> Unit) = podcastLoadNow(done)
         override val activity: Activity get() = this@MainActivity
         override val prefs: SharedPreferences get() = this@MainActivity.prefs
         override fun io(r: () -> Unit) { this@MainActivity.io.execute { r() } }
@@ -230,6 +232,8 @@ class MainActivity : ScaledActivity() {
             np.update(true, true, song.ifEmpty { st.name }, if (song.isEmpty()) "Radio" else st.name, icons[st.url])
         } else np.clear()
     }
+
+    private var lookKey = ""
 
     private fun refreshPanels() {
         podPanel?.refresh()
@@ -475,6 +479,26 @@ class MainActivity : ScaledActivity() {
     }
 
     /** Neue Folgen der Abos herunterladen und Gehörtes aufräumen (stündlich). */
+    /** Knopf „Neue Folgen jetzt laden“: unabhängig von der Automatik-Einstellung. */
+    private fun podcastLoadNow(done: (Int) -> Unit) {
+        val n = prefs.getInt("pcAutoCount", 1).coerceAtLeast(1)
+        val subs = Podcast.subs(prefs)
+        io.execute {
+            var started = 0
+            for (sub in subs) {
+                val res = try { Podcast.feed(this, sub.feed, force = true) } catch (_: Exception) { null } ?: continue
+                val pod = if (res.first.art.isEmpty()) sub else res.first
+                for (ep in res.second.take(n)) {
+                    if (!Podcast.done(prefs, ep) && !Podcast.isDownloaded(this, ep) && !Podcast.progress.containsKey(ep.url)) {
+                        started++
+                        Podcast.download(this, prefs, pod, ep) { main.post { podPanel?.downloadsChanged() } }
+                    }
+                }
+            }
+            main.post { done(started) }
+        }
+    }
+
     private fun podcastAuto(force: Boolean = false) {
         val mode = prefs.getString("pcAuto", "off") ?: "off"
         if (!force && System.currentTimeMillis() - prefs.getLong("pcAutoLast", 0L) < 55 * 60_000L) return
@@ -695,6 +719,12 @@ class MainActivity : ScaledActivity() {
         super.onResume()
         hideSystemUi()
         skin = loadSkin()
+        if (lookKey.isNotEmpty() && lookKey != skin.id) {
+            podPanel?.let { if (it.visible) it.relayout(frameView()) }
+            medPanel?.let { if (it.visible) it.relayout(frameView()) }
+            weatherPage?.restyle()
+        }
+        lookKey = skin.id
         updateNextAlarm()
         Alarms.schedule(this)
         lastAutoNight = null

@@ -11,8 +11,8 @@ android {
         applicationId = "de.datacreate.radiouhr"
         minSdk = 21
         targetSdk = 34
-        versionCode = 34
-        versionName = "4.5"
+        versionCode = 35
+        versionName = "4.6"
     }
 
     signingConfigs {

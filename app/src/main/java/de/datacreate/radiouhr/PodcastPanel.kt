@@ -27,6 +27,8 @@ import java.util.Locale
 
 /** Schnittstelle zur Hauptseite (Player, Hintergrund-Threads, Bilder). */
 interface PodcastHost {
+    fun skin(): Skin
+    fun loadNew(done: (Int) -> Unit)
     val activity: Activity
     val prefs: SharedPreferences
     fun io(r: () -> Unit)
@@ -84,9 +86,10 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     var onClose: (() -> Unit)? = null
     fun rootView(): View? = root
 
-    private val bg = col("#0F1215")
-    private val card = col("#1B2026")
-    private val sub = col("#9AA3AD")
+    private var L = Look(h.skin())
+    private val card get() = L.card
+    private val sub get() = L.sub
+    private val fg get() = L.fg
 
     // ------------------------------------------------------------ Öffnen / Schließen
 
@@ -104,9 +107,10 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     fun show(frame: FrameLayout) {
         if (root != null) return
         land = a.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        L = Look(h.skin())
         val r = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(bg)
+            background = BgDrawable(L.k.bg, L.k, d)
             isClickable = true
         }
         // Kopf
@@ -118,7 +122,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         head.addView(btn("‹", 28f) { back() })
         title = TextView(a).apply {
             textSize = 21f
-            setTextColor(Color.WHITE)
+            setTextColor(fg)
             typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
             setSingleLine(true)
             ellipsize = TextUtils.TruncateAt.END
@@ -139,7 +143,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         // Player unten
         bar = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(col("#161B20"))
+            setBackgroundColor(L.bar)
             setPadding(dp(14), dp(10), dp(14), dp(20))
         }
         val top = LinearLayout(a).apply {
@@ -151,7 +155,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         else top.addView(barArt, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(10) })
         val tt = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         barText = tt
-        barTitle = TextView(a).apply { textSize = 15f; setTextColor(Color.WHITE); maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
+        barTitle = TextView(a).apply { textSize = 15f; setTextColor(fg); maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
         barSub = TextView(a).apply { textSize = 12f; setTextColor(sub); setSingleLine(true); ellipsize = TextUtils.TruncateAt.END }
         tt.addView(barTitle)
         tt.addView(barSub)
@@ -163,6 +167,9 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         } else top.addView(tt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         bar.addView(top)
         seek = SeekBar(a).apply {
+            progressTintList = android.content.res.ColorStateList.valueOf(L.accent)
+            thumbTintList = android.content.res.ColorStateList.valueOf(L.accent)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(L.sub)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar?, v: Int, fromUser: Boolean) {
                     if (fromUser) tPos.text = Podcast.fmtTime(v * 1000L)
@@ -269,7 +276,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     private fun btn(t: String, sp: Float, onClick: () -> Unit) = TextView(a).apply {
         text = t
         textSize = sp
-        setTextColor(Color.WHITE)
+        setTextColor(fg)
         gravity = Gravity.CENTER
         setPadding(dp(12), dp(6), dp(12), dp(6))
         setOnClickListener { onClick() }
@@ -278,7 +285,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     private fun round(t: String, big: Boolean = false, onClick: () -> Unit) = TextView(a).apply {
         text = t
         textSize = if (big) 24f else 15f
-        setTextColor(if (big) Color.BLACK else Color.WHITE)
+        setTextColor(if (big) L.onAccent else fg)
         gravity = Gravity.CENTER
         background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
@@ -299,7 +306,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     }
 
     private fun art(iv: ImageView, url: String) {
-        iv.setImageDrawable(GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(col("#2A3138")) })
+        iv.setImageDrawable(GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(L.chip) })
         if (url.isEmpty()) return
         iv.tag = url
         h.io {
@@ -321,7 +328,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             val iv = ImageView(a).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
                 clipToOutline = true
-                background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(col("#2A3138")) }
+                background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(L.chip) }
             }
             art(iv, artUrl)
             r.addView(iv, LinearLayout.LayoutParams(dp(54), dp(54)).apply { rightMargin = dp(12) })
@@ -330,7 +337,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         tt.addView(TextView(a).apply {
             text = t1
             textSize = 15f
-            setTextColor(if (dim) sub else Color.WHITE)
+            setTextColor(if (dim) sub else fg)
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
         })
@@ -358,6 +365,23 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         scroll.scrollTo(0, 0)
         val subs = Podcast.subs(h.prefs)
         val dls = Podcast.downloads(a, h.prefs)
+        if (subs.isNotEmpty()) {
+            val busy = Podcast.progress.size
+            list.addView(btn(if (busy > 0) "⬇  Lädt $busy Folge(n) …  · nochmal prüfen" else "⬇  Neue Folgen jetzt herunterladen", 15f) {
+                Toast.makeText(a, "Suche neue Folgen …", Toast.LENGTH_SHORT).show()
+                h.loadNew { n ->
+                    Toast.makeText(a, if (n == 0) "Keine neuen Folgen – alles schon da" else "$n neue Folge(n) werden heruntergeladen", Toast.LENGTH_LONG).show()
+                    if (root != null && screen == "home") showHome()
+                }
+            }.apply {
+                setTextColor(L.onAccent)
+                gravity = Gravity.CENTER
+                setPadding(dp(12), dp(12), dp(12), dp(12))
+                background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(h.accent()) }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(4), dp(6), dp(4), dp(6))
+            })
+        }
         if (dls.isNotEmpty()) {
             list.addView(TextView(a).apply {
                 text = "HERUNTERGELADEN  (lange drücken = löschen)"
@@ -405,7 +429,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             hint = "Name, Thema oder RSS-Adresse"
             setText(lastQuery)
             setSingleLine(true)
-            setTextColor(Color.WHITE)
+            setTextColor(fg)
             setHintTextColor(sub)
             imeOptions = EditorInfo.IME_ACTION_SEARCH
         }
@@ -465,12 +489,12 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                     rw.addView(TextView(a).apply {
                         text = if (subbed) "✓" else "＋ Abo"
                         textSize = 14f
-                        setTextColor(if (subbed) h.accent() else Color.WHITE)
+                        setTextColor(if (subbed) h.accent() else fg)
                         setPadding(dp(10), dp(8), dp(4), dp(8))
                         setOnClickListener {
                             val now = Podcast.toggleSub(h.prefs, p)
                             text = if (now) "✓" else "＋ Abo"
-                            setTextColor(if (now) h.accent() else Color.WHITE)
+                            setTextColor(if (now) h.accent() else fg)
                             Toast.makeText(a, if (now) "Abonniert" else "Abo entfernt", Toast.LENGTH_SHORT).show()
                         }
                     })
@@ -538,7 +562,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             when {
                 pr != null -> { tv.text = "⬇ $pr %"; tv.setTextColor(h.accent()) }
                 ep != null && Podcast.isDownloaded(a, ep) -> { tv.text = "✓⬇"; tv.setTextColor(h.accent()) }
-                else -> { tv.text = "⬇"; tv.setTextColor(Color.WHITE) }
+                else -> { tv.text = "⬇"; tv.setTextColor(fg) }
             }
         }
     }
@@ -555,11 +579,11 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         hd.addView(TextView(a).apply {
             text = if (subbed) "✓ Abonniert" else "＋ Abonnieren"
             textSize = 14f
-            setTextColor(if (subbed) h.accent() else Color.BLACK)
+            setTextColor(if (subbed) h.accent() else L.onAccent)
             setPadding(dp(12), dp(8), dp(12), dp(8))
             background = GradientDrawable().apply {
                 cornerRadius = dp(16).toFloat()
-                setColor(if (subbed) col("#2A3138") else h.accent())
+                setColor(if (subbed) L.chip else h.accent())
             }
             setOnClickListener { Podcast.toggleSub(h.prefs, pod); renderEpisodes(p0, eps) }
         })
@@ -570,7 +594,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                 setText(epFilter)
                 setSingleLine(true)
                 textSize = 15f
-                setTextColor(Color.WHITE)
+                setTextColor(fg)
                 setHintTextColor(sub)
                 imeOptions = EditorInfo.IME_ACTION_DONE
                 addTextChangedListener(object : android.text.TextWatcher {
@@ -674,7 +698,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             title.text = "Mediathek"
             msg("Noch kein Ordner gewählt.\n\nIn den Einstellungen unter „Mediathek“ einen Ordner wählen, z. B. „Hörspiele“ mit Unterordnern wie „Pippi Langstrumpf“. Darin können MP3s, Videos, Bilder und PDFs liegen.")
             list.addView(btn("Ordner wählen …", 17f) { h.openSettings(9) }.apply {
-                setTextColor(Color.BLACK)
+                setTextColor(L.onAccent)
                 background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(h.accent()) }
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(8)
@@ -769,7 +793,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             rw.addView(TextView(a).apply {
                 text = icon
                 textSize = 20f
-                setTextColor(Color.WHITE)
+                setTextColor(fg)
                 gravity = Gravity.CENTER
                 setPadding(dp(10), 0, dp(4), 0)
             }, 0)
@@ -923,6 +947,11 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             barArt.visibility = if (want == 0) View.GONE else View.VISIBLE
             barArt.layoutParams = lp
         }
+    }
+
+    /** Ein Download ist fertig: Startseite aktualisieren. */
+    fun downloadsChanged() {
+        if (root != null && screen == "home") showHome()
     }
 
     private var barKey = ""

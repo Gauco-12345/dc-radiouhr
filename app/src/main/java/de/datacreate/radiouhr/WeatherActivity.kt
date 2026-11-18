@@ -29,13 +29,15 @@ class WeatherPage(private val a: Activity, private val onBack: () -> Unit) {
     val scroll: ScrollView = ScrollView(a)
     private val main = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
-    private val accent = col("#FF8A3D")
-    private val sub = col("#9A9A9A")
-    private val iconCol = col("#FFD27A")
+    private var L = Look(Skins.byId(prefs.getString("skin", "standard")))
+    private val accent get() = L.accent
+    private val sub get() = L.sub
+    private val iconCol get() = L.k.icon
+    private val fg get() = L.fg
     private fun dp(v: Int) = (v * a.resources.displayMetrics.density).toInt()
 
     init {
-        scroll.setBackgroundColor(col("#101418"))
+        scroll.background = BgDrawable(L.k.bg, L.k, a.resources.displayMetrics.density)
         list = LinearLayout(a).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(12), dp(18), dp(40))
@@ -43,6 +45,13 @@ class WeatherPage(private val a: Activity, private val onBack: () -> Unit) {
         scroll.addView(list)
         render()
         refresh()
+    }
+
+    /** Nach Designwechsel neu einfärben. */
+    fun restyle() {
+        L = Look(Skins.byId(prefs.getString("skin", "standard")))
+        scroll.background = BgDrawable(L.k.bg, L.k, a.resources.displayMetrics.density)
+        render()
     }
 
     fun destroy() {
@@ -67,7 +76,7 @@ class WeatherPage(private val a: Activity, private val onBack: () -> Unit) {
 
     // ------------------------------------------------------------ Bausteine
 
-    private fun t(s: String, size: Float, color: Int = Color.WHITE, bold: Boolean = false, light: Boolean = false) = TextView(a).apply {
+    private fun t(s: String, size: Float, color: Int = fg, bold: Boolean = false, light: Boolean = false) = TextView(a).apply {
         text = s
         textSize = size
         setTextColor(color)
@@ -87,7 +96,7 @@ class WeatherPage(private val a: Activity, private val onBack: () -> Unit) {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 cornerRadius = dp(14).toFloat()
-                setColor(col("#1B2128"))
+                setColor(L.card)
             }
             setPadding(dp(14), dp(12), dp(14), dp(12))
         }
@@ -330,7 +339,7 @@ class WeatherPage(private val a: Activity, private val onBack: () -> Unit) {
                 setPadding(dp(6), dp(8), dp(6), dp(8))
                 background = GradientDrawable().apply {
                     cornerRadius = dp(10).toFloat()
-                    setColor(col("#1B2128"))
+                    setColor(L.card)
                 }
             }
             cell.addView(t(isoTime(times.optString(i)), 12f, sub))
@@ -338,7 +347,7 @@ class WeatherPage(private val a: Activity, private val onBack: () -> Unit) {
                 (h.optJSONArray("is_day")?.optInt(i, 1) ?: 1) == 1), 20f, iconCol))
             cell.addView(t(Wx.deg(h.optJSONArray("temperature_2m")?.optDouble(i) ?: Double.NaN), 16f))
             val pp = h.optJSONArray("precipitation_probability")?.optDouble(i) ?: Double.NaN
-            cell.addView(t(if (pp.isNaN()) "" else "${Math.round(pp)} %", 11f, col("#8FB8D8")))
+            cell.addView(t(if (pp.isNaN()) "" else "${Math.round(pp)} %", 11f, L.k.wind))
             row.addView(cell, LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(6) })
         }
         list.addView(hs)

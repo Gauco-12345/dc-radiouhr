@@ -153,3 +153,24 @@ object Skins {
 
     fun byId(id: String?): Skin = all.firstOrNull { it.id == id } ?: all[0]
 }
+
+/** Abgeleitete Farben, damit Podcast-, Mediathek- und Wetterseite zum gewählten Design passen. */
+class Look(val k: Skin) {
+    private fun lum(c: Int) = (0.299 * Color.red(c) + 0.587 * Color.green(c) + 0.114 * Color.blue(c)) / 255.0
+    private fun mix(a: Int, b: Int, f: Float, alpha: Int) = Color.argb(alpha,
+        (Color.red(a) + (Color.red(b) - Color.red(a)) * f).toInt(),
+        (Color.green(a) + (Color.green(b) - Color.green(a)) * f).toInt(),
+        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * f).toInt())
+
+    /** helles Design = dunkle Schrift */
+    val light = lum(k.fg) < 0.5
+    val fg = k.fg
+    val sub = k.sub
+    val accent = k.accent
+    val onAccent = if (lum(k.accent) > 0.6) Color.BLACK else Color.WHITE
+    private val base = if (light) Color.WHITE else mix(k.bgTop, Color.BLACK, 0.35f, 255)
+    val card = if (light) Color.argb(215, 255, 255, 255) else mix(base, k.fg, 0.10f, 225)
+    val chip = if (light) mix(Color.WHITE, k.fg, 0.12f, 235) else mix(base, k.fg, 0.20f, 235)
+    val bar = if (light) Color.argb(235, 255, 255, 255) else mix(base, k.fg, 0.05f, 240)
+    val plain = mix(k.bgTop, k.bgBottom, 0.5f, 255)
+}
