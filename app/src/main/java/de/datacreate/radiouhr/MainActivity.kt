@@ -170,9 +170,41 @@ class MainActivity : ScaledActivity() {
         override fun localBitmap(uri: android.net.Uri, max: Int): Bitmap? = decodeLocal(uri, max)
         override fun playVideo(uri: android.net.Uri, title: String) = this@MainActivity.playVideo(uri, title)
         override fun setQueue(q: List<Podcast.Ep>) { mediaQueue = q }
-        override fun openSettings(tab: Int) {
-            startActivity(Intent(this@MainActivity, SettingsActivity::class.java).putExtra("tab", tab))
+        override fun openSettings(tab: Int) = this@MainActivity.openSettings(tab)
+        override fun locked(): Boolean = (this@MainActivity.prefs.getString("kidPin", "") ?: "").isNotEmpty()
+        override fun guard(action: () -> Unit) = this@MainActivity.guard(action)
+    }
+
+    // ================================================================ Kindersperre
+
+    private var unlockedUntil = 0L
+
+    /** Führt action nur aus, wenn keine PIN gesetzt ist oder sie richtig eingegeben wurde (gilt dann 5 Minuten). */
+    private fun guard(action: () -> Unit) {
+        val pin = prefs.getString("kidPin", "") ?: ""
+        if (pin.isEmpty() || System.currentTimeMillis() < unlockedUntil) { action(); return }
+        val et = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            hint = "PIN"
+            gravity = Gravity.CENTER
+            textSize = 24f
         }
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle("Kindersperre")
+            .setMessage("Bitte PIN eingeben")
+            .setView(padded(et))
+            .setPositiveButton("OK") { _, _ ->
+                if (et.text.toString() == pin) {
+                    unlockedUntil = System.currentTimeMillis() + 5 * 60_000L
+                    action()
+                } else toast("Falsche PIN")
+            }
+            .setNegativeButton("Abbrechen", null)
+            .show()
+    }
+
+    private fun openSettings(tab: Int = 0) = guard {
+        startActivity(Intent(this, SettingsActivity::class.java).putExtra("tab", tab))
     }
 
     // ================================================================ Mediathek
@@ -515,6 +547,22 @@ class MainActivity : ScaledActivity() {
     private var lastAutoNight: Boolean? = null
     private var lastMinute = -1
     private var sleepAt = 0L
+    private var sleepAfterEp = false
+
+    /** Einschlaf-Timer abgelaufen: Radio, Podcast oder Hörspiel anhalten. */
+    private fun sleepStop() {
+        sleepAfterEp = false
+        tvTimerBadge.text = ""
+        if (pcMode && pcEp != null) {
+            if (pcPlaying()) player.pause()
+            savePcPos()
+            showStationName()
+            podPanel?.refresh()
+            medPanel?.refresh()
+        } else stopRadio()
+        if (videoBox != null) closeVideo()
+        player.volume = 1f
+    }
 
     private val timeFmt = SimpleDateFormat("HH:mm", Locale.GERMANY)
     private val dateFmt = SimpleDateFormat("EEEE, d. MMMM", Locale.GERMANY)
@@ -606,16 +654,23 @@ class MainActivity : ScaledActivity() {
         syncKnob()
         btnTimer.setOnClickListener { showTimer() }
         btnNight.setOnClickListener { setNight(!night) }
+        btnNight.setOnLongClickListener {
+            val v = !prefs.getBoolean("nightLight", false)
+            prefs.edit().putBoolean("nightLight", v).apply()
+            toast(if (v) "Nachtlicht an (warmes Licht im Nachtmodus)" else "Nachtlicht aus")
+            if (!night) setNight(true) else applyLook()
+            true
+        }
         btnSettings = findViewById(R.id.btnSettings)
-        btnSettings.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        btnSettings.setOnClickListener { openSettings() }
         btnGear = findViewById(R.id.btnGear)
-        btnGear.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        btnGear.setOnClickListener { openSettings() }
         weatherBox = findViewById(R.id.weatherBox)
         wxDivider = findViewById(R.id.wxDivider)
         weatherBox.setOnClickListener { startActivity(Intent(this, WeatherActivity::class.java)) }
         tvTemp.setOnClickListener { startActivity(Intent(this, WeatherActivity::class.java)) }
         btnAdd = findViewById(R.id.btnAdd)
-        btnAdd.setOnClickListener { showStations() }
+        btnAdd.setOnClickListener { guard { showStations() } }
         clockPanel.setOnClickListener { setNight(!night) }
         root.setOnClickListener { if (night) setNight(false) }
 
@@ -790,13 +845,18 @@ class MainActivity : ScaledActivity() {
         alarming = true
         main.removeCallbacks(backToNight)
         if (night) setNight(false)
+        val resume = url == "resume:" && pcEp != null
         val idx = stations.indexOfFirst { it.url == url }
         if (idx >= 0) current = idx
         val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         audio.setStreamVolume(AudioManager.STREAM_MUSIC, Math.round(max * prefs.getInt("alarmVol", 50) / 100f).coerceAtLeast(1), 0)
         fadeStart = System.currentTimeMillis()
+        if (resume) {
+            loadEpisode(true)
+        } else {
+            playCurrent()
+        }
         player.volume = if (prefs.getInt("alarmFade", 60) > 0) 0.05f else 1f
-        playCurrent()
         main.removeCallbacks(fadeStep)
         main.post(fadeStep)
         main.removeCallbacks(alarmFallback)
@@ -823,7 +883,8 @@ class MainActivity : ScaledActivity() {
 
     private fun snooze() {
         val min = prefs.getInt("snoozeMin", 9)
-        val url = stations.getOrNull(current)?.url ?: ""
+        val url = if (pcMode && pcEp != null) "resume:" else stations.getOrNull(current)?.url ?: ""
+        if (pcMode) { player.pause(); savePcPos() }
         endAlarm(stopRadio = true)
         val at = System.currentTimeMillis() + min * 60_000L
         prefs.edit().putLong("snoozeAt", at).putString("snoozeStation", url).apply()
@@ -1124,9 +1185,10 @@ class MainActivity : ScaledActivity() {
                 val left = sleepAt - System.currentTimeMillis()
                 if (left <= 0) {
                     sleepAt = 0
-                    stopRadio()
-                    tvTimerBadge.text = ""
+                    sleepStop()
                 } else {
+                    // in der letzten Minute langsam leiser
+                    if (left < 60_000L && !alarming) player.volume = (left / 60_000f).coerceIn(0.05f, 1f)
                     tvTimerBadge.text = "${(left / 60000) + 1}′"
                 }
             }
@@ -1216,7 +1278,7 @@ class MainActivity : ScaledActivity() {
         val k = skin
         val on = night
         val den = resources.displayMetrics.density
-        root.background = if (on) ColorDrawable(Color.BLACK) else BgDrawable(k.bg, k, den)
+        root.background = if (on) ColorDrawable(if (prefs.getBoolean("nightLight", false)) col("#4A2306") else Color.BLACK) else BgDrawable(k.bg, k, den)
         clockPanel.background = if (on || k.clockPanel == PanelStyle.NONE) null else PanelDrawable(k.clockPanel, k, den)
         radioPanel.background = if (k.radioPanel == PanelStyle.NONE) null else PanelDrawable(k.radioPanel, k, den)
         val cp = if (!on && k.clockPanel != PanelStyle.NONE) dp(16).toInt() else 0
@@ -1717,7 +1779,9 @@ class MainActivity : ScaledActivity() {
                     if (state == Player.STATE_ENDED) {
                         pcEp?.let { Podcast.setDone(prefs, it, true) }
                         val pp = pcPod
-                        if (isMedia(pp) && mediaQueue.isNotEmpty() && prefs.getBoolean("mediaNext", true)) {
+                        if (sleepAfterEp) {
+                            main.post { sleepStop() }
+                        } else if (isMedia(pp) && mediaQueue.isNotEmpty() && prefs.getBoolean("mediaNext", true)) {
                             val nx = mediaQueue.first()
                             mediaQueue = mediaQueue.drop(1)
                             main.post { playEpisode(pp!!, nx) }
@@ -2276,7 +2340,9 @@ class MainActivity : ScaledActivity() {
         d.show()
     }
 
-    private fun confirmRemove(pos: Int) {
+    private fun confirmRemove(pos: Int) = guard { confirmRemoveInner(pos) }
+
+    private fun confirmRemoveInner(pos: Int) {
         if (pos !in stations.indices) return
         val s = stations[pos]
         AlertDialog.Builder(this, dlgTheme)
@@ -2403,19 +2469,30 @@ class MainActivity : ScaledActivity() {
     // ================================================================ Timer & Optionen
 
     private fun showTimer() {
-        val mins = intArrayOf(0, 15, 30, 45, 60, 90, 120)
-        val labels = mins.map { if (it == 0) "Aus" else "$it Minuten" }.toTypedArray()
+        val mins = intArrayOf(0, 5, 10, 15, 20, 30, 45, 60, 90, 120, -1)
+        val labels = mins.map { when (it) { 0 -> "Aus"; -1 -> "Nach dieser Folge / Datei"; else -> "$it Minuten" } }.toTypedArray()
         AlertDialog.Builder(this, dlgTheme)
             .setTitle("Einschlaf-Timer")
             .setItems(labels) { _, which ->
                 val m = mins[which]
+                sleepAfterEp = false
                 if (m == 0) {
                     sleepAt = 0
                     tvTimerBadge.text = ""
+                    if (!alarming) player.volume = 1f
+                } else if (m == -1) {
+                    sleepAt = 0
+                    if (pcEp == null || !pcMode) {
+                        toast("Gerade läuft keine Folge")
+                    } else {
+                        sleepAfterEp = true
+                        tvTimerBadge.text = "1×"
+                        if (!pcPlaying()) pcToggle()
+                    }
                 } else {
                     sleepAt = System.currentTimeMillis() + m * 60_000L
                     tvTimerBadge.text = "$m′"
-                    if (!wantPlaying) playCurrent()
+                    if (!anyPlaying()) { if (pcMode && pcEp != null) pcToggle() else playCurrent() }
                 }
             }
             .show()

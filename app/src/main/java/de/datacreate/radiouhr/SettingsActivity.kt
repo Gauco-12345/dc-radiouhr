@@ -45,7 +45,7 @@ class SettingsActivity : ScaledActivity() {
     private var tab = 0
     private lateinit var tabBox: LinearLayout
     private lateinit var scroll: ScrollView
-    private val TABS = listOf("Darstellung", "Seiten", "Wetter", "Netatmo", "Wecker", "Nacht", "Radio", "Podcast", "Termine", "Mediathek", "Sichern & Update")
+    private val TABS = listOf("Darstellung", "Seiten", "Wetter", "Netatmo", "Wecker", "Nacht", "Radio", "Podcast", "Termine", "Mediathek", "Kindersperre", "Sichern & Update")
     private fun t(name: String) = TABS[tab] == name
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -500,6 +500,7 @@ class SettingsActivity : ScaledActivity() {
         section("Nachtmodus")
         c = card()
         check(c, "Automatisch einschalten", "autoNight", true, "Nachts nur die Uhr, gedimmt. Mehrere Zeiträume möglich, z. B. auch Mittagsschlaf.")
+        check(c, "Nachtlicht", "nightLight", false, "Im Nachtmodus leuchtet der Hintergrund schwach warm-orange statt schwarz. Schnell umschalten: Mond-Taste lange drücken.")
         c = card()
         (c.layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(10)
         val brightLabel = TextView(this).apply {
@@ -625,6 +626,27 @@ class SettingsActivity : ScaledActivity() {
             prefs.edit().putString("startPage", act[it]).apply()
         }
         }
+        if (t("Kindersperre")) {
+        section("Kindersperre")
+        c = card()
+        val pin = prefs.getString("kidPin", "") ?: ""
+        c.addView(small("Mit PIN sind Einstellungen, Sender hinzufügen/löschen, Podcast-Suche, Abbestellen und Downloads löschen gesperrt. Nach richtiger Eingabe bleibt alles 5 Minuten offen. Abspielen, Mediathek und Wecker-Schlummern gehen immer."))
+        if (pin.isEmpty()) {
+            button(c, "PIN festlegen …", "4 bis 8 Ziffern") { askPin() }
+        } else {
+            c.addView(TextView(this).apply {
+                text = "✓ Kindersperre aktiv"
+                textSize = 15f
+                setTextColor(col("#8CE08C"))
+                setPadding(dp(4), dp(8), 0, dp(4))
+            })
+            button(c, "PIN ändern …") { askPin() }
+            button(c, "Kindersperre ausschalten") {
+                prefs.edit().remove("kidPin").apply()
+                build()
+            }
+        }
+        }
         if (t("Mediathek")) {
         section("Mediathek")
         c = card()
@@ -719,10 +741,9 @@ class SettingsActivity : ScaledActivity() {
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         row.addView(chip("✕", false, onDelete), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) })
         box.addView(row)
-        if (stations.isNotEmpty()) {
-            val idx = maxOf(0, stations.indexOfFirst { it.second == a.station })
-            spinner(box, "Sender", stations.map { it.first }, idx) { a.station = stations[it].second; onChange() }
-        }
+        val opts = stations + ("▶ Weiterhören (letzte Folge / Hörspiel)" to "resume:")
+        val idx = maxOf(0, opts.indexOfFirst { it.second == a.station })
+        spinner(box, "Sender", opts.map { it.first }, idx) { a.station = opts[it].second; onChange() }
         if (a.on) {
             val t = Alarms.nextTime(a)
             box.addView(small("klingelt " + SimpleDateFormat("EEEE, d. MMMM 'um' HH:mm", Locale.GERMANY).format(Date(t))))
@@ -904,6 +925,29 @@ class SettingsActivity : ScaledActivity() {
     // ------------------------------------------------------------ Export / Import
 
     private val REQ_MEDIA = 43
+
+    private fun askPin() {
+        val et = EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            hint = "neue PIN"
+            gravity = Gravity.CENTER
+            textSize = 22f
+        }
+        val box = LinearLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(et, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle("PIN für die Kindersperre")
+            .setView(box)
+            .setPositiveButton("Speichern") { _, _ ->
+                val p = et.text.toString().trim()
+                if (p.length in 4..8 && p.all { it.isDigit() }) {
+                    prefs.edit().putString("kidPin", p).apply()
+                    Toast.makeText(this, "PIN gespeichert – bitte merken!", Toast.LENGTH_LONG).show()
+                    build()
+                } else Toast.makeText(this, "Bitte 4 bis 8 Ziffern eingeben", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("Abbrechen", null)
+            .show()
+    }
 
     private fun pickMediaFolder() {
         try {
