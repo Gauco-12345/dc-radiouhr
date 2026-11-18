@@ -183,6 +183,60 @@ class MainActivity : ScaledActivity() {
     private var videoBox: View? = null
     private var videoView: androidx.media3.ui.PlayerView? = null
 
+    // ---- Benachrichtigung „läuft gerade“
+    private var nowPlaying: NowPlaying? = null
+    private var notifOff = false
+    private val notifArt = ConcurrentHashMap<String, Bitmap>()
+    private val notifLoading = HashSet<String>()
+
+    private fun notifToggle() {
+        notifOff = false
+        if (pcMode && pcEp != null) pcToggle() else if (wantPlaying) stopRadio() else playCurrent()
+    }
+
+    private fun notifStop() {
+        if (pcMode && pcEp != null) { if (pcPlaying()) pcToggle() } else if (wantPlaying) stopRadio()
+        notifOff = true
+        nowPlaying?.clear()
+    }
+
+    private fun artFor(url: String): Bitmap? {
+        if (url.isEmpty()) return null
+        notifArt[url]?.let { return it }
+        if (notifLoading.add(url)) io.execute {
+            val b = try {
+                if (url.startsWith("content:")) decodeLocal(android.net.Uri.parse(url), 256) else loadBitmap(url)
+            } catch (_: Throwable) { null }
+            if (b != null) { notifArt[url] = b; main.post { updateNotif() } }
+        }
+        return null
+    }
+
+    private fun updateNotif() {
+        val np = nowPlaying ?: return
+        if (videoMode) { np.clear(); return }
+        val pe = pcEp
+        val pp = pcPod
+        if (pcMode && pe != null && pp != null) {
+            val playing = pcPlaying()
+            if (playing) notifOff = false
+            val active = !notifOff && player.playbackState != Player.STATE_IDLE
+            np.update(active, playing, pe.title, pp.title, if (active) artFor(pe.art.ifEmpty { pp.art }) else null)
+        } else if (wantPlaying && stations.isNotEmpty()) {
+            notifOff = false
+            val st = stations[current.coerceIn(0, stations.size - 1)]
+            val t = tvNowPlaying.text.toString().trim()
+            val song = if (t.startsWith("Verbinde") || t.startsWith("Keine Verbindung")) "" else t
+            np.update(true, true, song.ifEmpty { st.name }, if (song.isEmpty()) "Radio" else st.name, icons[st.url])
+        } else np.clear()
+    }
+
+    private fun refreshPanels() {
+        podPanel?.refresh()
+        medPanel?.refresh()
+        updateNotif()
+    }
+
     private fun isMedia(p: Podcast.Pod?) = p?.feed?.startsWith("media:") == true
 
     private fun decodeLocal(uri: android.net.Uri, max: Int): Bitmap? = try {
@@ -261,8 +315,7 @@ class MainActivity : ScaledActivity() {
         }
         showStationName()
         updatePlayButton()
-        podPanel?.refresh()
-        medPanel?.refresh()
+        refreshPanels()
     }
 
     // ================================================================ Seiten (wischen)
@@ -498,8 +551,7 @@ class MainActivity : ScaledActivity() {
             player.play()
         }
         showStationName()
-        podPanel?.refresh()
-        medPanel?.refresh()
+        refreshPanels()
     }
 
     private fun openPodcasts() {
@@ -572,6 +624,9 @@ class MainActivity : ScaledActivity() {
 
 
         setupPlayer()
+        nowPlaying = try {
+            NowPlaying(this, onToggle = { notifToggle() }, onStop = { notifStop() })
+        } catch (_: Exception) { null }
         loadStations()
         Podcast.last(prefs)?.let { (p, e) ->
             pcPod = p
@@ -875,6 +930,7 @@ class MainActivity : ScaledActivity() {
 
     override fun onDestroy() {
         main.removeCallbacksAndMessages(null)
+        try { nowPlaying?.release() } catch (_: Exception) { }
         player.release()
         io.shutdownNow()
         super.onDestroy()
@@ -922,6 +978,10 @@ class MainActivity : ScaledActivity() {
         }
         if (prefs.getBoolean("showEvents", true) && !hasPerm(Manifest.permission.READ_CALENDAR)) {
             need.add(Manifest.permission.READ_CALENDAR)
+        }
+        if (Build.VERSION.SDK_INT >= 33 && !hasPerm(Manifest.permission.POST_NOTIFICATIONS) && !prefs.getBoolean("askedNotif", false)) {
+            prefs.edit().putBoolean("askedNotif", true).apply()
+            need.add(Manifest.permission.POST_NOTIFICATIONS)
         }
         if (need.isNotEmpty()) requestPermissions(need.toTypedArray(), 1)
     }
@@ -1116,7 +1176,7 @@ class MainActivity : ScaledActivity() {
             syncKnob()
 
             if (pcMode) {
-                podPanel?.let { if (it.visible) it.refresh() }
+                refreshPanels()
                 if (cal.get(Calendar.SECOND) % 5 == 0 && player.isPlaying) savePcPos()
             }
 
@@ -1280,10 +1340,10 @@ class MainActivity : ScaledActivity() {
 
         radioPanel.visibility = vis(!on)
         tvDate.visibility = vis(!on)
-        val fc = k.forecast && prefs.getBoolean("wxForecast", true)
-        weatherBox.visibility = vis(!on)
-        weatherRow.visibility = vis(!on)
-        tvWeatherInfo.visibility = vis(!on && k.details && tvWeatherInfo.text.isNotEmpty())
+        val fc = k.weather && k.forecast && prefs.getBoolean("wxForecast", true)
+        weatherBox.visibility = vis(!on && k.weather)
+        weatherRow.visibility = vis(!on && k.weather)
+        tvWeatherInfo.visibility = vis(!on && k.weather && k.details && tvWeatherInfo.text.isNotEmpty())
         forecastRow.visibility = vis(!on && fc)
         wxDivider.visibility = vis(!on && fc)
         wxDivider.setBackgroundColor(Color.argb(70, Color.red(k.sub), Color.green(k.sub), Color.blue(k.sub)))
@@ -1549,7 +1609,7 @@ class MainActivity : ScaledActivity() {
         if (prefs.getBoolean("wxHum", false) && !hum.isNaN()) parts.add("${Math.round(hum)} % Feuchte")
         if (prefs.getBoolean("ntIndoor", false) && !indoor.isNaN()) parts.add("innen ${Wx.deg1(indoor)}")
         tvWeatherInfo.text = parts.joinToString("\n")
-        tvWeatherInfo.visibility = vis(!night && skin.details && parts.isNotEmpty())
+        tvWeatherInfo.visibility = vis(!night && skin.weather && skin.details && parts.isNotEmpty())
 
         val days = mutableListOf<DayForecast>()
         val times = daily?.optJSONArray("time")
@@ -1704,7 +1764,7 @@ class MainActivity : ScaledActivity() {
                 if (videoMode) return
                 if (pcMode) {
                     showStationName()
-                    podPanel?.refresh()
+                    refreshPanels()
                     return
                 }
                 if (isPlaying && tvNowPlaying.text.startsWith("Verbinde")) tvNowPlaying.text = ""
@@ -1724,7 +1784,7 @@ class MainActivity : ScaledActivity() {
                         }
                     }
                     showStationName()
-                    podPanel?.refresh()
+                    refreshPanels()
                     return
                 }
                 if (state == Player.STATE_BUFFERING && wantPlaying) tvNowPlaying.text = "Verbinde …"
@@ -1751,7 +1811,7 @@ class MainActivity : ScaledActivity() {
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
                 if (pcMode || videoMode) return
                 val t = mediaMetadata.title?.toString()?.trim()
-                if (!t.isNullOrEmpty()) tvNowPlaying.text = t
+                if (!t.isNullOrEmpty()) { tvNowPlaying.text = t; updateNotif() }
             }
         })
     }
@@ -1801,6 +1861,7 @@ class MainActivity : ScaledActivity() {
 
     private fun updatePlayButton() {
         btnPlay.setImageResource(if (wantPlaying) R.drawable.ic_stop else R.drawable.ic_play)
+        updateNotif()
     }
 
     private fun showStationName() {
@@ -1810,11 +1871,13 @@ class MainActivity : ScaledActivity() {
             tvStation.text = (if (pcPlaying()) "" else "▶  ") + (if (isMedia(pp)) "♪  " else "🎙  ") + pp.title
             tvNowPlaying.text = pe.title
             buildFavorites()
+            updateNotif()
             return
         }
         tvStation.text = if (stations.isEmpty()) "Keine Sender – tippe auf ＋"
         else (if (wantPlaying) "" else "▶  ") + stations[current.coerceIn(0, stations.size - 1)].name
         buildFavorites()
+        updateNotif()
     }
 
     // ================================================================ Favoriten-Kacheln

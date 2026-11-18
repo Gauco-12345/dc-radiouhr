@@ -222,6 +222,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             if (code == KeyEvent.KEYCODE_BACK && e.action == KeyEvent.ACTION_UP) { back(); true } else false
         }
         root = r
+        barKey = ""
         val c = h.current()
         if (media) {
             keepState = false
@@ -258,6 +259,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         when (screen) {
             "home" -> hide()
             "results" -> showSearch()
+            "episodes" -> if (epBack == "results") search(lastQuery) else showHome()
             else -> showHome()
         }
     }
@@ -301,12 +303,12 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         if (url.isEmpty()) return
         iv.tag = url
         h.io {
-            val b = h.bitmap(url)
+            val b = if (url.startsWith("content:")) h.localBitmap(android.net.Uri.parse(url), 300) else h.bitmap(url)
             h.ui { if (b != null && iv.tag == url) iv.setImageBitmap(b) }
         }
     }
 
-    private fun row(artUrl: String, t1: String, t2: String, dim: Boolean = false, onClick: () -> Unit, onLong: (() -> Unit)? = null): LinearLayout {
+    private fun row(artUrl: String, t1: String, t2: String, dim: Boolean = false, onClick: () -> Unit, onLong: (() -> Unit)? = null, into: LinearLayout? = null): LinearLayout {
         val r = LinearLayout(a).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -333,6 +335,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             ellipsize = TextUtils.TruncateAt.END
         })
         if (t2.isNotEmpty()) tt.addView(TextView(a).apply {
+            tag = "t2"
             text = t2
             textSize = 12f
             setTextColor(sub)
@@ -340,7 +343,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             ellipsize = TextUtils.TruncateAt.END
         })
         r.addView(tt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        list.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        (into ?: list).addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             setMargins(0, dp(4), 0, dp(4))
         })
         return r
@@ -363,7 +366,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                 setPadding(dp(6), dp(8), 0, dp(4))
             })
             for ((pod, ep) in dls) {
-                row(ep.art.ifEmpty { pod.art }, ep.title, pod.title + " · " + Podcast.sizeMb(a, ep), onClick = {
+                row(ep.art.ifEmpty { pod.art }, ep.title, pod.title + (if (ep.durationSec > 0) " · " + Podcast.fmtTime(ep.durationSec * 1000) else ""), onClick = {
                     h.play(pod, ep)
                     refresh()
                 }, onLong = {
@@ -418,7 +421,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         r.addView(et, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         r.addView(btn("Los", 16f) { go() })
         list.addView(r)
-        msg("Tipp: Statt eines Namens kannst du auch die RSS-Adresse eines Podcasts einfügen.")
+        msg("Gesucht wird nach Podcasts und nach einzelnen Folgen – z. B. „Toskana“ findet auch Folgen anderer Podcasts, die so heißen.\n\nStatt eines Namens kannst du auch die RSS-Adresse eines Podcasts einfügen.")
         et.requestFocus()
     }
 
@@ -427,19 +430,36 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         screen = "results"
         title.text = "„$q“"
         list.removeAllViews()
+        scroll.scrollTo(0, 0)
         msg("Suche …")
         h.io {
-            val res = try {
-                if (q.startsWith("http")) listOfNotNull(Podcast.feed(a, q, true)?.first) else Podcast.search(q)
+            val pods: List<Podcast.Pod>
+            val eps = ArrayList<Pair<Podcast.Pod, Podcast.Ep>>()
+            try {
+                if (q.startsWith("http")) {
+                    pods = listOfNotNull(Podcast.feed(a, q, true)?.first)
+                } else {
+                    pods = Podcast.search(q)
+                    // zuerst passende Folgen aus den eigenen Abos (alle Folgen des Feeds)
+                    val low = q.lowercase(Locale.GERMANY)
+                    for (sp in Podcast.subs(h.prefs)) {
+                        val f = Podcast.cachedFeed(a, sp.feed) ?: continue
+                        val pod = if (f.first.art.isEmpty()) sp else f.first
+                        for (e in f.second) if (e.title.lowercase(Locale.GERMANY).contains(low)) eps.add(pod to e)
+                    }
+                    val more = try { Podcast.searchEpisodes(q) } catch (_: Exception) { emptyList() }
+                    for (x in more) if (eps.none { it.second.url == x.second.url }) eps.add(x)
+                }
             } catch (e: Exception) {
-                h.ui { list.removeAllViews(); msg("Suche nicht möglich: ${e.message}") }
+                h.ui { if (screen == "results") { list.removeAllViews(); msg("Suche nicht möglich: ${e.message}") } }
                 return@io
             }
             h.ui {
-                if (screen != "results") return@ui
+                if (screen != "results" || lastQuery != q) return@ui
                 list.removeAllViews()
-                if (res.isEmpty()) msg("Nichts gefunden.")
-                for (p in res) {
+                if (pods.isEmpty() && eps.isEmpty()) msg("Nichts gefunden.")
+                if (pods.isNotEmpty()) list.addView(head("PODCASTS"))
+                for (p in pods.take(if (eps.isEmpty()) 40 else 12)) {
                     val subbed = Podcast.isSub(h.prefs, p.feed)
                     val rw = row(p.art, p.title, p.author, onClick = { showEpisodes(p) })
                     rw.addView(TextView(a).apply {
@@ -455,11 +475,36 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                         }
                     })
                 }
+                if (eps.isNotEmpty()) list.addView(head("FOLGEN  (tippen = abspielen · lange drücken = ganzer Podcast)"))
+                val cur = h.current()
+                for ((p, e) in eps) {
+                    val info = StringBuilder(p.title)
+                    if (e.date > 0) info.append(" · ").append(dateFmt.format(Date(e.date)))
+                    if (e.durationSec > 0) info.append(" · ").append(Podcast.fmtTime(e.durationSec * 1000))
+                    if (cur?.second?.url == e.url) info.append(" · ▶ läuft")
+                    row(p.art, e.title, info.toString(), onClick = {
+                        h.play(p, e)
+                        refresh()
+                        Toast.makeText(a, "„${e.title}“", Toast.LENGTH_SHORT).show()
+                    }, onLong = { showEpisodes(p) })
+                }
             }
         }
     }
 
+    private fun head(t: String) = TextView(a).apply {
+        text = t
+        textSize = 12f
+        setTextColor(h.accent())
+        setPadding(dp(6), dp(12), 0, dp(4))
+    }
+
+    private var epBack = "home"
+    private var epFilter = ""
+
     fun showEpisodes(pod: Podcast.Pod) {
+        if (screen != "episodes") epBack = screen
+        if (curPod?.feed != pod.feed) epFilter = ""
         screen = "episodes"
         curPod = pod
         title.text = pod.title
@@ -518,6 +563,49 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             }
             setOnClickListener { Podcast.toggleSub(h.prefs, pod); renderEpisodes(p0, eps) }
         })
+        val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        if (eps.size > 6) {
+            val et = EditText(a).apply {
+                hint = "🔍  In ${eps.size} Folgen suchen …"
+                setText(epFilter)
+                setSingleLine(true)
+                textSize = 15f
+                setTextColor(Color.WHITE)
+                setHintTextColor(sub)
+                imeOptions = EditorInfo.IME_ACTION_DONE
+                addTextChangedListener(object : android.text.TextWatcher {
+                    override fun beforeTextChanged(x: CharSequence?, st: Int, c: Int, af: Int) {}
+                    override fun onTextChanged(x: CharSequence?, st: Int, b: Int, c: Int) {}
+                    override fun afterTextChanged(x: android.text.Editable?) {
+                        val f = x?.toString()?.trim() ?: ""
+                        if (f == epFilter) return
+                        epFilter = f
+                        fillEpisodes(pod, p0, eps, box)
+                    }
+                })
+            }
+            list.addView(et, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(4), dp(6), dp(4), 0)
+            })
+        }
+        list.addView(box)
+        fillEpisodes(pod, p0, eps, box)
+        if (eps.isEmpty()) msg("Keine Folgen gefunden.")
+        else msg("⬇ = herunterladen (zum Hören ohne Internet) · lange drücken = gehört / Download löschen")
+        scroll.post { scroll.scrollTo(0, y) }
+    }
+
+    private fun fillEpisodes(pod: Podcast.Pod, p0: Podcast.Pod, all: List<Podcast.Ep>, box: LinearLayout) {
+        box.removeAllViews()
+        statusViews.clear()
+        val low = epFilter.lowercase(Locale.GERMANY)
+        val eps = if (low.isEmpty()) all else all.filter { it.title.lowercase(Locale.GERMANY).contains(low) }
+        if (eps.isEmpty() && all.isNotEmpty()) box.addView(TextView(a).apply {
+            text = "Keine Folge mit „$epFilter“."
+            textSize = 14f
+            setTextColor(sub)
+            setPadding(dp(6), dp(16), dp(6), dp(16))
+        })
         val cur = h.current()
         for (e in eps) {
             val pos = Podcast.pos(h.prefs, e)
@@ -532,9 +620,9 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                 pos > 0 && e.durationSec > 0 -> info.append(" · noch ").append(Podcast.fmtTime(e.durationSec * 1000 - pos))
                 pos > 0 -> info.append(" · angefangen")
             }
-            val rw = row("", e.title, info.toString(), dim = done && !playing, onClick = {
+            val rw = row("", e.title, info.toString(), dim = done && !playing, into = box, onClick = {
                 h.play(pod, e)
-                renderEpisodes(p0, eps)
+                renderEpisodes(p0, all)
             }, onLong = {
                 val dl = Podcast.isDownloaded(a, e)
                 val items = arrayOf(if (done) "Als ungehört markieren" else "Als gehört markieren",
@@ -545,7 +633,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                         if (w == 0) Podcast.setDone(h.prefs, e, !done)
                         else if (dl) Podcast.deleteDownload(a, h.prefs, e)
                         else startDownload(pod, e)
-                        renderEpisodes(p0, eps)
+                        renderEpisodes(p0, all)
                     }
                     .show()
             })
@@ -565,9 +653,6 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             rw.addView(st)
         }
         updateStatus()
-        if (eps.isEmpty()) msg("Keine Folgen gefunden.")
-        else msg("⬇ = herunterladen (zum Hören ohne Internet) · lange drücken = gehört / Download löschen")
-        scroll.post { scroll.scrollTo(0, y) }
     }
 
     // ------------------------------------------------------------ Mediathek
@@ -634,28 +719,43 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             }
         }
         val audio = files.filter { it.kind == "audio" }
-        val pod = Podcast.Pod("media:" + folders.last().first, folders.last().second, "Mediathek", "")
+        mediaArt = cover?.uri?.toString() ?: ""
+        val pod = Podcast.Pod("media:" + folders.last().first, folders.last().second, "Mediathek", mediaArt)
         val eps = audio.map { epOf(it) }
         val cur = h.current()
+        val pending = ArrayList<Pair<Media.Item, () -> Unit>>()
         for (f in files) {
             val icon = when (f.kind) { "audio" -> "♪"; "video" -> "🎬"; "image" -> "🖼"; else -> "📄" }
-            val info = StringBuilder(Media.sizeLabel(f.size))
+            val timed = f.kind == "audio" || f.kind == "video"
+            var state = ""
             if (f.kind == "audio") {
                 val ep = epOf(f)
                 val pos = Podcast.pos(h.prefs, ep)
-                when {
-                    cur?.second?.url == ep.url -> info.append(" · ▶ läuft")
-                    Podcast.done(h.prefs, ep) -> info.append(" · ✓ gehört")
-                    pos > 0 -> info.append(" · bei ").append(Podcast.fmtTime(pos))
+                state = when {
+                    cur?.second?.url == ep.url -> "▶ läuft"
+                    Podcast.done(h.prefs, ep) -> "✓ gehört"
+                    pos > 0 -> "bei " + Podcast.fmtTime(pos)
+                    else -> ""
                 }
             }
-            val rw = row("", f.title, info.toString(), onClick = {
+            val known = durMs[f.docId]
+            fun label(ms: Long?): String = listOf(
+                if (ms == null) "…" else if (ms > 0) Podcast.fmtTime(ms) else "",
+                state
+            ).filter { it.isNotEmpty() }.joinToString(" · ")
+            val info = when {
+                timed -> label(known)
+                f.kind == "image" -> ""
+                else -> Media.sizeLabel(f.size)
+            }
+            val rw = row("", f.title, info, onClick = {
                 when (f.kind) {
                     "audio" -> {
                         val i = audio.indexOf(f)
                         h.setQueue(eps.drop(i + 1))
                         h.play(pod, eps[i])
                         renderMedia(items)
+                        refresh()
                     }
                     "video" -> h.playVideo(f.uri, f.title)
                     "image" -> showImage(f)
@@ -673,10 +773,27 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                 gravity = Gravity.CENTER
                 setPadding(dp(10), 0, dp(4), 0)
             }, 0)
+            if (timed && known == null) {
+                val tv = rw.findViewWithTag<TextView>("t2")
+                if (tv != null) pending.add(f to { tv.text = label(durMs[f.docId]) })
+            }
+        }
+        if (pending.isNotEmpty()) {
+            val folder = folders.lastOrNull()?.first
+            h.io {
+                for ((f, upd) in pending) {
+                    if (screen != "media" || folders.lastOrNull()?.first != folder) return@io
+                    durMs[f.docId] = try { Media.duration(a, f) } catch (_: Throwable) { 0L }
+                    h.ui { if (root != null) upd() }
+                }
+            }
         }
     }
 
-    private fun epOf(f: Media.Item) = Podcast.Ep(f.docId, f.title, 0L, f.uri.toString(), 0L, "")
+    private val durMs = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private var mediaArt = ""
+
+    private fun epOf(f: Media.Item) = Podcast.Ep(f.docId, f.title, 0L, f.uri.toString(), (durMs[f.docId] ?: 0L) / 1000, mediaArt)
 
     private fun open(d: Media.Item) {
         folders.add(d.docId to d.name)
@@ -808,13 +925,16 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         }
     }
 
+    private var barKey = ""
+
     fun refresh() {
         if (root == null) return
         if (Podcast.progress.isNotEmpty()) updateStatus()
         val c = h.current()
         bar.visibility = if (c == null) View.GONE else View.VISIBLE
         if (c == null) return
-        if (barTitle.text != c.second.title) {
+        if (barKey != c.second.url) {
+            barKey = c.second.url
             barTitle.text = c.second.title
             barSub.text = c.first.title
             art(barArt, c.second.art.ifEmpty { c.first.art })

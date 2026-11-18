@@ -184,6 +184,26 @@ object Podcast {
         return out
     }
 
+    /** Einzelne Folgen im Apple-Verzeichnis suchen (Titel/Beschreibung), z. B. „Toskana“. */
+    fun searchEpisodes(term: String): List<Pair<Pod, Ep>> {
+        val url = "https://itunes.apple.com/search?media=podcast&entity=podcastEpisode&country=DE&limit=50&term=" + URLEncoder.encode(term, "UTF-8")
+        val a = JSONObject(Net.get(url)).optJSONArray("results") ?: return emptyList()
+        val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+        val out = ArrayList<Pair<Pod, Ep>>()
+        for (i in 0 until a.length()) {
+            val o = a.getJSONObject(i)
+            val feed = o.optString("feedUrl")
+            val epUrl = o.optString("episodeUrl")
+            if (feed.isEmpty() || epUrl.isEmpty()) continue
+            val art = o.optString("artworkUrl600").ifEmpty { o.optString("artworkUrl160") }
+            val date = try { iso.parse(o.optString("releaseDate"))?.time ?: 0L } catch (_: Exception) { 0L }
+            val pod = Pod(feed, o.optString("collectionName"), o.optString("artistName"), art)
+            out.add(pod to Ep(o.optString("episodeGuid").ifEmpty { epUrl }, o.optString("trackName"), date, epUrl,
+                o.optLong("trackTimeMillis") / 1000, ""))
+        }
+        return out
+    }
+
     // ------------------------------------------------------------ Feed
 
     private fun cache(ctx: Context, feed: String) = File(ctx.cacheDir, "pod_" + Integer.toHexString(feed.hashCode()))

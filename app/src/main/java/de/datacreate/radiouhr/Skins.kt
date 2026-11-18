@@ -38,6 +38,7 @@ data class Skin(
     val forecast: Boolean = true,
     val events: Boolean = true,
     val details: Boolean = true,
+    val weather: Boolean = true,
     val extraButtons: Boolean = true,
     // ---- Gestaltung über die Farben hinaus
     val clock: ClockStyle = ClockStyle.TEXT,
@@ -142,7 +143,7 @@ object Skins {
             col("#7EC8F2"), col("#CDEBFA"), col("#1F2A44"), col("#3D5170"), col("#FF7A1A"), col("#FFB000"), col("#2B7BB9"),
             col("#FFFFFF"), col("#33000000"), col("#FFE7C2"), 30f, col("#FFD23F"), col("#55FF7A1A"),
             clockFamily = "sans-serif-medium", textFamily = "sans-serif-medium",
-            presets = Presets.GRID, events = true,
+            presets = Presets.GRID, events = true, weather = false,
             clock = ClockStyle.KIDS, btn = BtnStyle.ROUND, knob = KnobStyle.BRAUN, bg = BgStyle.MEADOW,
             iconTint = col("#1F2A44")
         )

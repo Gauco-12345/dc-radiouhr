@@ -85,6 +85,21 @@ object Media {
     private fun natKey(s: String): String =
         Regex("\\d+").replace(s.lowercase(Locale.GERMANY)) { it.value.padStart(8, '0') }
 
+    /** Spieldauer in ms (zwischengespeichert, 0 = unbekannt). Nicht im UI-Thread aufrufen. */
+    fun duration(ctx: Context, it: Item): Long {
+        val sp = ctx.getSharedPreferences("mediaDur", Context.MODE_PRIVATE)
+        val k = Integer.toHexString((it.docId + "|" + it.size).hashCode())
+        val c = sp.getLong(k, -1L)
+        if (c >= 0) return c
+        val r = android.media.MediaMetadataRetriever()
+        val ms = try {
+            r.setDataSource(ctx, it.uri)
+            r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+        } catch (_: Throwable) { 0L } finally { try { r.release() } catch (_: Throwable) { } }
+        sp.edit().putLong(k, ms).apply()
+        return ms
+    }
+
     fun sizeLabel(b: Long): String = when {
         b <= 0 -> ""
         b < 1048576 -> String.format(Locale.GERMANY, "%.0f KB", b / 1024.0)
