@@ -170,17 +170,72 @@ object Podcast {
 
     // ------------------------------------------------------------ Suche
 
-    fun search(term: String): List<Pod> {
-        val url = "https://itunes.apple.com/search?media=podcast&entity=podcast&country=DE&limit=40&term=" + URLEncoder.encode(term, "UTF-8")
-        val a = JSONObject(Net.get(url)).optJSONArray("results") ?: return emptyList()
-        val out = ArrayList<Pod>()
-        for (i in 0 until a.length()) {
-            val o = a.getJSONObject(i)
-            val feed = o.optString("feedUrl")
-            if (feed.isEmpty()) continue
-            out.add(Pod(feed, o.optString("collectionName"), o.optString("artistName"),
-                o.optString("artworkUrl600").ifEmpty { o.optString("artworkUrl100") }))
+    private val GERMAN_WORDS = setOf("der", "die", "das", "und", "mit", "von", "für", "fuer", "ein", "eine", "im", "zum", "zur",
+        "über", "ueber", "wie", "was", "wir", "ist", "nicht", "auf", "aus", "bei", "dem", "den", "des", "sich", "auch", "noch",
+        "geschichte", "nachrichten", "gespräch", "wissen", "leben", "kinder", "hörspiel", "folge", "woche", "heute", "deutsch")
+    private val GERMAN_HOSTS = listOf("ardaudiothek", "deutschlandfunk", "dradio", "wdr.de", "ndr.de", "br.de", "swr", "hr-", "hr.de",
+        "mdr.de", "zdf", "rbb", "radiobremen", "sr.de", "dw.com", "srf.ch", "orf.at", "spiegel", "zeit.de", "faz.net", "sueddeutsche",
+        "podigee", "letscast", "podcaster.de", "julephosting", "audiorella", "fyyd")
+
+    /** Grobe Schätzung, ob ein Titel/Feed deutsch ist (für die Sortierung). */
+    fun germanScore(vararg t: String): Int {
+        var sc = 0
+        for (x in t) {
+            val low = x.lowercase(Locale.GERMANY)
+            if (low.any { it in "äöüß" }) sc += 2
+            for (w in low.split(Regex("[^a-zäöüß]+"))) if (w in GERMAN_WORDS) sc++
+            if (GERMAN_HOSTS.any { low.contains(it) }) sc += 3
         }
+        return sc
+    }
+
+    private fun feedKey(u: String) = u.lowercase(Locale.ROOT).substringAfter("://").removePrefix("www.").trimEnd('/')
+
+    /** Podcasts suchen – deutsche bevorzugt (fyyd.de, deutsches Verzeichnis, plus Apple, deutsche zuerst). */
+    fun search(term: String): List<Pod> {
+        val de = ArrayList<Pod>()
+        val other = ArrayList<Pod>()
+        val seen = HashSet<String>()
+        // 1) fyyd.de: Sprache steht dabei
+        try {
+            val url = "https://api.fyyd.de/0.2/search/podcast?term=" + URLEncoder.encode(term, "UTF-8") + "&count=30"
+            val a = JSONObject(Net.get(url)).optJSONArray("data")
+            if (a != null) for (i in 0 until a.length()) {
+                val o = a.getJSONObject(i)
+                val feed = o.optString("xmlURL")
+                if (feed.isEmpty() || !seen.add(feedKey(feed))) continue
+                val pod = Pod(feed, o.optString("title"), o.optString("author"),
+                    o.optString("imgURL").ifEmpty { o.optString("thumbImageURL") })
+                if (o.optString("language").lowercase(Locale.ROOT).startsWith("de")) de.add(pod) else other.add(pod)
+            }
+        } catch (_: Exception) { }
+        // 2) Apple (deutscher Store), deutsch klingende nach vorn
+        val apple = ArrayList<Pair<Pod, Int>>()
+        try {
+            val url = "https://itunes.apple.com/search?media=podcast&entity=podcast&country=DE&lang=de_de&limit=40&term=" + URLEncoder.encode(term, "UTF-8")
+            val a = JSONObject(Net.get(url)).optJSONArray("results")
+            if (a != null) for (i in 0 until a.length()) {
+                val o = a.getJSONObject(i)
+                val feed = o.optString("feedUrl")
+                if (feed.isEmpty() || !seen.add(feedKey(feed))) continue
+                val pod = Pod(feed, o.optString("collectionName"), o.optString("artistName"),
+                    o.optString("artworkUrl600").ifEmpty { o.optString("artworkUrl100") })
+                apple.add(pod to germanScore(pod.title, pod.author, feed))
+            }
+        } catch (e: Exception) {
+            if (de.isEmpty() && other.isEmpty()) throw e
+        }
+        // Reihenfolge: Apple-Treffer mit deutschen Merkmalen und fyyd-deutsch abwechselnd (beide sind relevant sortiert)
+        val appleDe = apple.filter { it.second >= 2 }.map { it.first }
+        val appleRest = apple.filter { it.second < 2 }.map { it.first }
+        val out = ArrayList<Pod>()
+        val n = maxOf(appleDe.size, de.size)
+        for (i in 0 until n) {
+            if (i < appleDe.size) out.add(appleDe[i])
+            if (i < de.size) out.add(de[i])
+        }
+        out.addAll(appleRest)
+        out.addAll(other)
         return out
     }
 
@@ -212,7 +267,7 @@ object Podcast {
 
     /** Einzelne Folgen im Apple-Verzeichnis suchen (Titel/Beschreibung), z. B. „Toskana“. */
     fun searchEpisodes(term: String): List<Pair<Pod, Ep>> {
-        val url = "https://itunes.apple.com/search?media=podcast&entity=podcastEpisode&country=DE&limit=50&term=" + URLEncoder.encode(term, "UTF-8")
+        val url = "https://itunes.apple.com/search?media=podcast&entity=podcastEpisode&country=DE&lang=de_de&limit=50&term=" + URLEncoder.encode(term, "UTF-8")
         val a = JSONObject(Net.get(url)).optJSONArray("results") ?: return emptyList()
         val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
         val out = ArrayList<Pair<Pod, Ep>>()
@@ -227,7 +282,7 @@ object Podcast {
             out.add(pod to Ep(o.optString("episodeGuid").ifEmpty { epUrl }, o.optString("trackName"), date, epUrl,
                 o.optLong("trackTimeMillis") / 1000, ""))
         }
-        return out
+        return out.sortedByDescending { if (germanScore(it.second.title, it.first.title, it.first.feed) >= 2) 1 else 0 }
     }
 
     // ------------------------------------------------------------ Feed
