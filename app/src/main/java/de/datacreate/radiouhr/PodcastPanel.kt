@@ -71,7 +71,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     private var backBtn: TextView? = null
 
     private fun updateBack() {
-        val top = if (media) viewer == null && (screen != "media" || mediaTop()) else screen == "home"
+        val top = if (media) viewer == null && (screen != "media" || mediaTop()) else screen == "home" && !editSubs
         backBtn?.visibility = if (top) View.GONE else View.VISIBLE
         title.setPadding(if (top) dp(10) else 0, 0, 0, 0)
     }
@@ -95,6 +95,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     private var keepState = false
     private var lastEps: Pair<Podcast.Pod, List<Podcast.Ep>>? = null
     private val statusViews = HashMap<String, TextView>()
+    private val statusEps = HashMap<String, Podcast.Ep>()
 
     /** Nach dem Drehen neu aufbauen und die aktuelle Seite behalten. */
     fun relayout(frame: FrameLayout) {
@@ -200,7 +201,10 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                 "results" -> search(lastQuery)
                 else -> showHome()
             }
-        } else if (c != null && screen == "home" && !c.first.feed.startsWith("media:")) showEpisodes(c.first) else showHome()
+        } else {
+            if (c != null && screen == "home" && Podcast.isSub(h.prefs, c.first.feed)) homeSel = c.first.feed
+            showHome()
+        }
         refresh()
         updateBack()
     }
@@ -225,7 +229,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             return
         }
         when (screen) {
-            "home" -> { }
+            "home" -> if (editSubs) { editSubs = false; homeCache = null; showHome() }
             "results" -> showSearch()
             "episodes" -> if (epBack == "results") search(lastQuery) else showHome()
             else -> showHome()
@@ -305,44 +309,235 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
 
     // ------------------------------------------------------------ Seiten
 
+    /** Auswahl der Kachel oben: "all", "dl" oder Feed-Adresse eines Abos. */
+    private var homeSel = "all"
+    private var editSubs = false
+    private var homeCache: List<Pair<Podcast.Pod, Podcast.Ep>>? = null
+    private var homeCacheKey = ""
+
+    private class Tile(val label: String, val art: String, val symbol: String, val selected: Boolean,
+                       val onClick: () -> Unit)
+
+    /** Kachelraster im Stil der Mediathek (Bild, Name unten), Auswahl mit Rahmen in Akzentfarbe. */
+    private fun tileGrid(tiles: List<Tile>) {
+        val cols = if (land) 5 else 3
+        var r: LinearLayout? = null
+        val dm = a.resources.displayMetrics
+        val avail = (if (land) dm.widthPixels - PlayerBar.sideWidth(a) else dm.widthPixels) - dp(28)
+        val side = avail / cols - dp(8)
+        tiles.forEachIndexed { i, t ->
+            if (i % cols == 0) {
+                r = LinearLayout(a).apply { orientation = LinearLayout.HORIZONTAL }
+                list.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, side).apply { setMargins(0, dp(4), 0, dp(4)) })
+            }
+            val f = FrameLayout(a).apply {
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(14).toFloat()
+                    setColor(if (t.art.isEmpty()) (if (t.selected) h.accent() else L.chip) else tileColor(t.label))
+                    if (t.selected) setStroke(dp(3), h.accent())
+                }
+                clipToOutline = true
+                setPadding(if (t.selected) dp(3) else 0, if (t.selected) dp(3) else 0, if (t.selected) dp(3) else 0, if (t.selected) dp(3) else 0)
+                setOnClickListener { t.onClick() }
+            }
+            if (t.art.isNotEmpty()) {
+                val iv = ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+                f.addView(iv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                art(iv, t.art)
+                f.addView(TextView(a).apply {
+                    text = t.label
+                    textSize = 11f
+                    setTextColor(Color.WHITE)
+                    setSingleLine(true)
+                    ellipsize = TextUtils.TruncateAt.END
+                    setPadding(dp(6), dp(3), dp(6), dp(4))
+                    setBackgroundColor(Color.argb(160, 0, 0, 0))
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+            } else {
+                f.addView(LinearLayout(a).apply {
+                    orientation = LinearLayout.VERTICAL
+                    gravity = Gravity.CENTER
+                    addView(TextView(a).apply {
+                        text = t.symbol
+                        textSize = 26f
+                        gravity = Gravity.CENTER
+                        setTextColor(if (t.selected) L.onAccent else fg)
+                    })
+                    addView(TextView(a).apply {
+                        text = t.label
+                        textSize = 12f
+                        gravity = Gravity.CENTER
+                        maxLines = 2
+                        setTextColor(if (t.selected) L.onAccent else fg)
+                    })
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            }
+            r!!.addView(f, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(dp(4), 0, dp(4), 0) })
+        }
+        val rest = (cols - tiles.size % cols) % cols
+        repeat(rest) { r?.addView(View(a), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(dp(4), 0, dp(4), 0) }) }
+    }
+
     fun showHome() {
         screen = "home"
         title.text = "Podcasts"
         list.removeAllViews()
-        scroll.scrollTo(0, 0)
+        statusViews.clear()
         val subs = Podcast.subs(h.prefs)
-        val dls = Podcast.downloads(a, h.prefs)
-        if (dls.isNotEmpty()) {
-            list.addView(TextView(a).apply {
-                text = "HERUNTERGELADEN  (lange drücken = löschen)"
-                textSize = 12f
-                setTextColor(h.accent())
-                setPadding(dp(6), dp(8), 0, dp(4))
-            })
-            for ((pod, ep) in dls) {
-                row(ep.art.ifEmpty { pod.art }, ep.title, pod.title + (if (ep.durationSec > 0) " · " + Podcast.fmtTime(ep.durationSec * 1000) else ""), onClick = {
-                    h.play(pod, ep)
-                    refresh()
-                }, onLong = {
-                    Podcast.deleteDownload(a, h.prefs, ep)
-                    Toast.makeText(a, "Download gelöscht", Toast.LENGTH_SHORT).show()
-                    showHome()
-                })
-            }
-        }
         if (subs.isEmpty()) {
             msg("Noch keine Podcasts abonniert.\nOben auf „Suchen“ tippen, z. B. nach „Tagesschau“, „Deutschlandfunk“ oder einem Thema.")
+            val dls = Podcast.downloads(a, h.prefs)
+            if (dls.isNotEmpty()) { list.addView(head("HERUNTERGELADEN")); fillEpisodes(dls, list, true) { showHome() } }
             return
         }
-        list.addView(TextView(a).apply {
-            text = "MEINE ABOS"
-            textSize = 12f
-            setTextColor(h.accent())
-            setPadding(dp(6), dp(8), 0, dp(4))
+        if (editSubs) { showEditSubs(subs); return }
+        if (homeSel != "all" && homeSel != "dl" && subs.none { it.feed == homeSel }) homeSel = "all"
+        val tiles = ArrayList<Tile>()
+        tiles.add(Tile("Alle", "", "≡", homeSel == "all") { homeSel = "all"; epFilter = ""; showHome() })
+        tiles.add(Tile("Geladen", "", "⬇", homeSel == "dl") { homeSel = "dl"; epFilter = ""; showHome() })
+        for (p in subs) tiles.add(Tile(p.title, p.art, "🎙", homeSel == p.feed) {
+            homeSel = p.feed; epFilter = ""; showHome()
         })
-        for (p in subs) {
-            row(p.art, p.title, p.author, onClick = { showEpisodes(p) })
+        tiles.add(Tile("Abos bearbeiten", "", "✎", false) { editSubs = true; showHome(); updateBack() })
+        tileGrid(tiles)
+        val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        when (homeSel) {
+            "dl" -> {
+                list.addView(head("HERUNTERGELADEN"))
+                list.addView(box)
+                val dls = Podcast.downloads(a, h.prefs)
+                if (dls.isEmpty()) msgIn(box, "Noch nichts heruntergeladen. In der Folgenliste auf ⬇ tippen – oder in den Einstellungen „Neue Folgen jetzt herunterladen“.")
+                else fillEpisodes(dls, box, true) { showHome() }
+            }
+            "all" -> {
+                list.addView(head("NEUESTE FOLGEN"))
+                list.addView(box)
+                val key = subs.joinToString("|") { it.feed }
+                val c = homeCache
+                if (c != null && homeCacheKey == key) fillEpisodes(c, box, true) { showHome() } else msgIn(box, "Folgen werden geladen …")
+                h.io {
+                    // aus den gespeicherten Feeds zusammenstellen (schnell), dann einmal frisch holen
+                    fun collect(): List<Pair<Podcast.Pod, Podcast.Ep>> {
+                        val out = ArrayList<Pair<Podcast.Pod, Podcast.Ep>>()
+                        for (sp in subs) {
+                            val f = Podcast.cachedFeed(a, sp.feed) ?: continue
+                            val pod = if (f.first.art.isEmpty()) sp else f.first
+                            for (e in f.second.take(15)) out.add(pod to e)
+                        }
+                        return out.sortedByDescending { it.second.date }.take(60)
+                    }
+                    var l = collect()
+                    if (c == null || homeCacheKey != key || l.map { it.second.url } != c.map { it.second.url }) post(l, key, box)
+                    var changed = false
+                    for (sp in subs) {
+                        if (Podcast.cachedFeed(a, sp.feed) == null) try { Podcast.feed(a, sp.feed, force = true); changed = true } catch (_: Exception) { }
+                    }
+                    if (changed) { l = collect(); post(l, key, box) }
+                }
+            }
+            else -> {
+                val pod = subs.first { it.feed == homeSel }
+                curPod = pod
+                list.addView(box)
+                val cached = Podcast.cachedFeed(a, pod.feed)
+                if (cached != null) showAboEpisodes(pod, cached, box) else msgIn(box, "Folgen werden geladen …")
+                h.io {
+                    val res = try { Podcast.feed(a, pod.feed, force = true) } catch (e: Exception) {
+                        if (cached == null) h.ui { if (screen == "home" && homeSel == pod.feed) { box.removeAllViews(); msgIn(box, "Feed nicht erreichbar: ${e.message}") } }
+                        null
+                    }
+                    if (res != null && (cached == null || res.second.map { it.url } != cached.second.map { it.url }))
+                        h.ui { if (screen == "home" && homeSel == pod.feed) showAboEpisodes(pod, res, box) }
+                }
+            }
         }
+    }
+
+    private fun post(l: List<Pair<Podcast.Pod, Podcast.Ep>>, key: String, box: LinearLayout) {
+        homeCache = l
+        homeCacheKey = key
+        h.ui { if (screen == "home" && homeSel == "all") fillEpisodes(l, box, true) { showHome() } }
+    }
+
+    private fun showAboEpisodes(sp: Podcast.Pod, f: Pair<Podcast.Pod, List<Podcast.Ep>>, box: LinearLayout) {
+        val pod = if (f.first.art.isEmpty()) sp else f.first
+        val all = f.second
+        box.removeAllViews()
+        val inner = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        if (all.size > 6) {
+            val et = EditText(a).apply {
+                hint = "🔍  In ${all.size} Folgen suchen …"
+                setText(epFilter)
+                setSingleLine(true)
+                textSize = 15f
+                setTextColor(fg)
+                setHintTextColor(sub)
+                imeOptions = EditorInfo.IME_ACTION_DONE
+                addTextChangedListener(object : android.text.TextWatcher {
+                    override fun beforeTextChanged(x: CharSequence?, st: Int, c: Int, af: Int) {}
+                    override fun onTextChanged(x: CharSequence?, st: Int, b: Int, c: Int) {}
+                    override fun afterTextChanged(x: android.text.Editable?) {
+                        val q = x?.toString()?.trim() ?: ""
+                        if (q == epFilter) return
+                        epFilter = q
+                        fillEpisodes(all.map { pod to it }, inner, false) { showHome() }
+                    }
+                })
+            }
+            box.addView(et, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                setMargins(dp(4), dp(6), dp(4), 0)
+            })
+        }
+        box.addView(inner)
+        fillEpisodes(all.map { pod to it }, inner, false) { showHome() }
+    }
+
+    /** Abos sortieren (▲▼) und kündigen (✕). */
+    private fun showEditSubs(subs: MutableList<Podcast.Pod>) {
+        list.addView(head("ABOS SORTIEREN UND KÜNDIGEN"))
+        subs.forEachIndexed { i, p ->
+            val rw = row(p.art, p.title, p.author, onClick = {})
+            fun mini(t: String, enabled: Boolean, act: () -> Unit) = TextView(a).apply {
+                text = t
+                textSize = 18f
+                gravity = Gravity.CENTER
+                setTextColor(if (enabled) fg else Color.argb(60, Color.red(fg), Color.green(fg), Color.blue(fg)))
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(L.chip) }
+                if (enabled) setOnClickListener { act() }
+                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply { leftMargin = dp(6) }
+            }
+            rw.addView(mini("▲", i > 0) { val l = Podcast.subs(h.prefs); l.add(i - 1, l.removeAt(i)); Podcast.saveSubs(h.prefs, l); showHome() })
+            rw.addView(mini("▼", i < subs.size - 1) { val l = Podcast.subs(h.prefs); l.add(i + 1, l.removeAt(i)); Podcast.saveSubs(h.prefs, l); showHome() })
+            rw.addView(mini("✕", true) {
+                android.app.AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                    .setMessage("„${p.title}“ kündigen?")
+                    .setPositiveButton("Kündigen") { _, _ ->
+                        Podcast.saveSubs(h.prefs, Podcast.subs(h.prefs).filter { it.feed != p.feed })
+                        if (homeSel == p.feed) homeSel = "all"
+                        homeCache = null
+                        showHome()
+                    }
+                    .setNegativeButton("Abbrechen", null)
+                    .show()
+            })
+        }
+        list.addView(btn("Fertig", 17f) { editSubs = false; homeCache = null; showHome() }.apply {
+            setTextColor(L.onAccent)
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(h.accent()) }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            setMargins(dp(4), dp(12), dp(4), dp(6))
+        })
+    }
+
+    private fun msgIn(box: LinearLayout, t: String) {
+        box.addView(TextView(a).apply {
+            text = t
+            textSize = 14f
+            setTextColor(sub)
+            setPadding(dp(6), dp(16), dp(6), dp(16))
+        })
     }
 
     fun showSearch() {
@@ -482,10 +677,10 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
     private fun updateStatus() {
         for ((url, tv) in statusViews) {
             val pr = Podcast.progress[url]
-            val ep = lastEps?.second?.firstOrNull { it.url == url }
+            val ep = statusEps[url]
             when {
-                pr != null -> { tv.text = "⬇ $pr %"; tv.setTextColor(h.accent()) }
-                ep != null && Podcast.isDownloaded(a, ep) -> { tv.text = "✓⬇"; tv.setTextColor(h.accent()) }
+                pr != null -> { tv.text = "$pr %"; tv.setTextColor(h.accent()) }
+                ep != null && Podcast.isDownloaded(a, ep) -> { tv.text = "✓"; tv.setTextColor(h.accent()) }
                 else -> { tv.text = "⬇"; tv.setTextColor(fg) }
             }
         }
@@ -528,7 +723,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                         val f = x?.toString()?.trim() ?: ""
                         if (f == epFilter) return
                         epFilter = f
-                        fillEpisodes(pod, p0, eps, box)
+                        fillEpisodes(eps.map { pod to it }, box, false) { renderEpisodes(p0, eps) }
                     }
                 })
             }
@@ -537,40 +732,38 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
             })
         }
         list.addView(box)
-        fillEpisodes(pod, p0, eps, box)
+        fillEpisodes(eps.map { pod to it }, box, false) { renderEpisodes(p0, eps) }
         if (eps.isEmpty()) msg("Keine Folgen gefunden.")
         else msg("⬇ = herunterladen (zum Hören ohne Internet) · lange drücken = gehört / Download löschen")
         scroll.post { scroll.scrollTo(0, y) }
     }
 
-    private fun fillEpisodes(pod: Podcast.Pod, p0: Podcast.Pod, all: List<Podcast.Ep>, box: LinearLayout) {
+    /** Folgenliste mit Download-Stand rechts. showPod = Podcast-Name und Bild mit anzeigen. */
+    private fun fillEpisodes(all: List<Pair<Podcast.Pod, Podcast.Ep>>, box: LinearLayout, showPod: Boolean, again: () -> Unit) {
         box.removeAllViews()
-        statusViews.clear()
         val low = epFilter.lowercase(Locale.GERMANY)
-        val eps = if (low.isEmpty()) all else all.filter { it.title.lowercase(Locale.GERMANY).contains(low) }
-        if (eps.isEmpty() && all.isNotEmpty()) box.addView(TextView(a).apply {
-            text = "Keine Folge mit „$epFilter“."
-            textSize = 14f
-            setTextColor(sub)
-            setPadding(dp(6), dp(16), dp(6), dp(16))
-        })
+        val eps = if (low.isEmpty()) all else all.filter { it.second.title.lowercase(Locale.GERMANY).contains(low) }
+        if (eps.isEmpty() && all.isNotEmpty()) msgIn(box, "Keine Folge mit „$epFilter“.")
         val cur = h.current()
-        for (e in eps) {
+        for ((pod, e) in eps) {
             val pos = Podcast.pos(h.prefs, e)
             val done = Podcast.done(h.prefs, e)
             val playing = cur?.second?.url == e.url
-            val info = StringBuilder()
-            if (e.date > 0) info.append(dateFmt.format(Date(e.date)))
-            if (e.durationSec > 0) info.append(" · ").append(Podcast.fmtTime(e.durationSec * 1000))
+            val parts = ArrayList<String>()
+            if (showPod) parts.add(pod.title)
+            if (e.date > 0) parts.add(dateFmt.format(Date(e.date)))
+            if (e.durationSec > 0) parts.add(Podcast.fmtTime(e.durationSec * 1000))
             when {
-                playing -> info.append(" · ▶ läuft")
-                done -> info.append(" · ✓ gehört")
-                pos > 0 && e.durationSec > 0 -> info.append(" · noch ").append(Podcast.fmtTime(e.durationSec * 1000 - pos))
-                pos > 0 -> info.append(" · angefangen")
+                playing -> parts.add("▶ läuft")
+                done -> parts.add("✓ gehört")
+                pos > 0 && e.durationSec > 0 -> parts.add("noch " + Podcast.fmtTime(e.durationSec * 1000 - pos))
+                pos > 0 -> parts.add("angefangen")
             }
-            val rw = row("", e.title, info.toString(), dim = done && !playing, into = box, onClick = {
+            val rw = row(if (showPod) e.art.ifEmpty { pod.art } else "", e.title, parts.joinToString(" · "), dim = done && !playing, into = box, onClick = {
                 h.play(pod, e)
-                renderEpisodes(p0, all)
+                val y = scroll.scrollY
+                fillEpisodes(all, box, showPod, again)
+                scroll.post { scroll.scrollTo(0, y) }
             }, onLong = {
                 val dl = Podcast.isDownloaded(a, e)
                 val items = arrayOf(if (done) "Als ungehört markieren" else "Als gehört markieren",
@@ -581,14 +774,17 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                         if (w == 0) Podcast.setDone(h.prefs, e, !done)
                         else if (dl) Podcast.deleteDownload(a, h.prefs, e)
                         else startDownload(pod, e)
-                        renderEpisodes(p0, all)
+                        val y = scroll.scrollY
+                        fillEpisodes(all, box, showPod, again)
+                        scroll.post { scroll.scrollTo(0, y) }
                     }
                     .show()
             })
             val st = TextView(a).apply {
-                textSize = 15f
+                textSize = 14f
                 gravity = Gravity.CENTER
-                setPadding(dp(12), dp(10), dp(6), dp(10))
+                minWidth = dp(52)
+                setPadding(dp(8), dp(10), dp(4), dp(10))
                 setOnClickListener {
                     when {
                         Podcast.progress.containsKey(e.url) -> {}
@@ -598,6 +794,7 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
                 }
             }
             statusViews[e.url] = st
+            statusEps[e.url] = e
             rw.addView(st)
         }
         updateStatus()
