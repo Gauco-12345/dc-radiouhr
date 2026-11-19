@@ -506,6 +506,7 @@ class MainActivity : ScaledActivity() {
         val loc = IntArray(2)
         v.getLocationOnScreen(loc)
         if (x < loc[0] || y < loc[1] || x > loc[0] + v.width || y > loc[1] + v.height) return false
+        if (v.tag == "noswipe") return true
         if (v is android.widget.SeekBar || v is VolumeSlider || v is KnobView || v is DialView || v is EditText) return true
         // waagrechte Leisten nur blockieren, wenn sie wirklich seitlich scrollen können
         if (v is android.widget.HorizontalScrollView && (v.canScrollHorizontally(1) || v.canScrollHorizontally(-1))) return true

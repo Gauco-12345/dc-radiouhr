@@ -378,6 +378,80 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         repeat(rest) { r?.addView(View(a), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(dp(4), 0, dp(4), 0) }) }
     }
 
+    private var stripX = 0
+
+    /** Kacheln in einer Reihe zum seitlich Ziehen. */
+    private fun tileStrip(tiles: List<Tile>) {
+        val side = dp(if (land) 96 else 92)
+        val hs = android.widget.HorizontalScrollView(a).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+        }
+        val row = LinearLayout(a).apply { orientation = LinearLayout.HORIZONTAL }
+        hs.addView(row)
+        val saveList = list
+        list = LinearLayout(a)            // tileGrid baut in „list“ – hier umgeleitet
+        for (t in tiles) {
+            val one = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+            list = one
+            tileGridOne(t, side)
+            row.addView(one, LinearLayout.LayoutParams(side, side).apply { setMargins(dp(4), 0, dp(4), 0) })
+        }
+        list = saveList
+        list.addView(hs, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, side + dp(8)).apply { topMargin = dp(4) })
+        // Position merken: beim Antippen springt die Leiste nicht an den Anfang
+        hs.post { hs.scrollTo(stripX, 0) }
+        hs.viewTreeObserver.addOnScrollChangedListener { stripX = hs.scrollX }
+    }
+
+    /** Eine einzelne Kachel (gleiche Optik wie im Raster) in „list“. */
+    private fun tileGridOne(t: Tile, side: Int) {
+        val f = FrameLayout(a).apply {
+            background = GradientDrawable().apply {
+                cornerRadius = dp(14).toFloat()
+                setColor(if (t.art.isEmpty()) (if (t.selected) h.accent() else L.chip) else tileColor(t.label))
+                if (t.selected) setStroke(dp(3), h.accent())
+            }
+            clipToOutline = true
+            val p = if (t.selected) dp(3) else 0
+            setPadding(p, p, p, p)
+            setOnClickListener { t.onClick() }
+        }
+        if (t.art.isNotEmpty()) {
+            val iv = ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+            f.addView(iv, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            art(iv, t.art)
+            f.addView(TextView(a).apply {
+                text = t.label
+                textSize = 11f
+                setTextColor(Color.WHITE)
+                setSingleLine(true)
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(dp(6), dp(3), dp(6), dp(4))
+                setBackgroundColor(Color.argb(160, 0, 0, 0))
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        } else {
+            f.addView(LinearLayout(a).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                addView(TextView(a).apply {
+                    text = t.symbol
+                    textSize = 24f
+                    gravity = Gravity.CENTER
+                    setTextColor(if (t.selected) L.onAccent else fg)
+                })
+                addView(TextView(a).apply {
+                    text = t.label
+                    textSize = 11f
+                    gravity = Gravity.CENTER
+                    maxLines = 2
+                    setTextColor(if (t.selected) L.onAccent else fg)
+                })
+            }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        list.addView(f, LinearLayout.LayoutParams(side, side))
+    }
+
     fun showHome() {
         screen = "home"
         title.text = "Podcasts"
@@ -394,12 +468,12 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         if (homeSel != "all" && homeSel != "dl" && subs.none { it.feed == homeSel }) homeSel = "all"
         val tiles = ArrayList<Tile>()
         tiles.add(Tile("Alle", "", "≡", homeSel == "all") { homeSel = "all"; epFilter = ""; showHome() })
-        tiles.add(Tile("Geladen", "", "⬇", homeSel == "dl") { homeSel = "dl"; epFilter = ""; showHome() })
         for (p in subs) tiles.add(Tile(p.title, p.art, "🎙", homeSel == p.feed) {
             homeSel = p.feed; epFilter = ""; showHome()
         })
+        tiles.add(Tile("Geladen", "", "⬇", homeSel == "dl") { homeSel = "dl"; epFilter = ""; showHome() })
         tiles.add(Tile("Abos bearbeiten", "", "✎", false) { editSubs = true; showHome(); updateBack() })
-        tileGrid(tiles)
+        tileStrip(tiles)
         val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         when (homeSel) {
             "dl" -> {
@@ -492,34 +566,89 @@ class PodcastPanel(private val h: PodcastHost, private val media: Boolean = fals
         fillEpisodes(all.map { pod to it }, inner, false) { showHome() }
     }
 
-    /** Abos sortieren (▲▼) und kündigen (✕). */
+    /** Abos per Ziehen am Griff ≡ sortieren, mit ✕ entfernen. */
     private fun showEditSubs(subs: MutableList<Podcast.Pod>) {
-        list.addView(head("ABOS SORTIEREN UND KÜNDIGEN"))
+        list.addView(head("AM GRIFF ≡ ZIEHEN ZUM SORTIEREN · ✕ ENTFERNT DAS ABO"))
+        val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        list.addView(box)
+        val rows = ArrayList<View>()
         subs.forEachIndexed { i, p ->
-            val rw = row(p.art, p.title, p.author, onClick = {})
-            fun mini(t: String, enabled: Boolean, act: () -> Unit) = TextView(a).apply {
-                text = t
+            val rw = row(p.art, p.title, p.author, onClick = {}, into = box)
+            rows.add(rw)
+            rw.addView(TextView(a).apply {
+                text = "✕"
                 textSize = 18f
                 gravity = Gravity.CENTER
-                setTextColor(if (enabled) fg else Color.argb(60, Color.red(fg), Color.green(fg), Color.blue(fg)))
+                setTextColor(fg)
                 background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(L.chip) }
-                if (enabled) setOnClickListener { act() }
                 layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply { leftMargin = dp(6) }
-            }
-            rw.addView(mini("▲", i > 0) { val l = Podcast.subs(h.prefs); l.add(i - 1, l.removeAt(i)); Podcast.saveSubs(h.prefs, l); showHome() })
-            rw.addView(mini("▼", i < subs.size - 1) { val l = Podcast.subs(h.prefs); l.add(i + 1, l.removeAt(i)); Podcast.saveSubs(h.prefs, l); showHome() })
-            rw.addView(mini("✕", true) {
-                android.app.AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
-                    .setMessage("„${p.title}“ kündigen?")
-                    .setPositiveButton("Kündigen") { _, _ ->
-                        Podcast.saveSubs(h.prefs, Podcast.subs(h.prefs).filter { it.feed != p.feed })
-                        if (homeSel == p.feed) homeSel = "all"
-                        homeCache = null
-                        showHome()
-                    }
-                    .setNegativeButton("Abbrechen", null)
-                    .show()
+                setOnClickListener {
+                    android.app.AlertDialog.Builder(a, android.R.style.Theme_Material_Dialog_Alert)
+                        .setMessage("Abo „${p.title}“ entfernen?")
+                        .setPositiveButton("Entfernen") { _, _ ->
+                            Podcast.saveSubs(h.prefs, Podcast.subs(h.prefs).filter { it.feed != p.feed })
+                            if (homeSel == p.feed) homeSel = "all"
+                            homeCache = null
+                            showHome()
+                        }
+                        .setNegativeButton("Abbrechen", null)
+                        .show()
+                }
             })
+            // Griff vorne
+            val grip = TextView(a).apply {
+                text = "≡"
+                textSize = 24f
+                gravity = Gravity.CENTER
+                setTextColor(sub)
+                tag = "noswipe"
+                layoutParams = LinearLayout.LayoutParams(dp(40), dp(48))
+            }
+            rw.addView(grip, 0)
+            var startY = 0f
+            var from = 0
+            var target = 0
+            grip.setOnTouchListener { _, ev ->
+                when (ev.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        scroll.requestDisallowInterceptTouchEvent(true)
+                        startY = ev.rawY
+                        from = rows.indexOf(rw)
+                        target = from
+                        rw.alpha = 0.85f
+                        rw.elevation = dp(8).toFloat()
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        val dy = ev.rawY - startY
+                        rw.translationY = dy
+                        val step = rw.height + dp(8)
+                        target = (from + Math.round(dy / step)).coerceIn(0, rows.size - 1)
+                        for ((k, v) in rows.withIndex()) {
+                            if (v === rw) continue
+                            val t = when {
+                                target > from && k in (from + 1)..target -> -step.toFloat()
+                                target < from && k in target until from -> step.toFloat()
+                                else -> 0f
+                            }
+                            if (v.translationY != t) v.animate().translationY(t).setDuration(120).start()
+                        }
+                    }
+                    android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                        scroll.requestDisallowInterceptTouchEvent(false)
+                        for (v in rows) { v.animate().cancel(); v.translationY = 0f }
+                        rw.alpha = 1f
+                        rw.elevation = 0f
+                        if (target != from) {
+                            val l = Podcast.subs(h.prefs)
+                            if (from < l.size) { l.add(target.coerceAtMost(l.size - 1), l.removeAt(from)); Podcast.saveSubs(h.prefs, l) }
+                            val y = scroll.scrollY
+                            showHome()
+                            scroll.post { scroll.scrollTo(0, y) }
+                        }
+                    }
+                }
+                true
+            }
         }
         list.addView(btn("Fertig", 17f) { editSubs = false; homeCache = null; showHome() }.apply {
             setTextColor(L.onAccent)
