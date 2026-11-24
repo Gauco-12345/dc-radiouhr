@@ -134,8 +134,8 @@ class MainActivity : ScaledActivity() {
         override fun skin(): Skin = this@MainActivity.skin
         override fun radioPlay() = playCurrent()
         override fun radioNow(idle: Boolean): RadioNow? {
-            if (pcMode || videoMode || stations.isEmpty() || (!wantPlaying && !idle)) return null
-            val st = stations[current.coerceIn(0, stations.size - 1)]
+            if (pcMode || videoMode || (!wantPlaying && !idle)) return null
+            val st = curStation() ?: return null
             val t = tvNowPlaying.text.toString().trim()
             val song = if (t.startsWith("Verbinde") || t.startsWith("Keine Verbindung")) "" else t
             return RadioNow(if (wantPlaying) song.ifEmpty { st.name } else st.name, st.name, icons[st.url], wantPlaying)
@@ -232,9 +232,9 @@ class MainActivity : ScaledActivity() {
             if (playing) notifOff = false
             val active = !notifOff && player.playbackState != Player.STATE_IDLE
             np.update(active, playing, pe.title, pp.title, if (active) artFor(pe.art.ifEmpty { pp.art }) else null)
-        } else if (wantPlaying && stations.isNotEmpty()) {
+        } else if (wantPlaying && curStation() != null) {
             notifOff = false
-            val st = stations[current.coerceIn(0, stations.size - 1)]
+            val st = curStation()!!
             val t = tvNowPlaying.text.toString().trim()
             val song = if (t.startsWith("Verbinde") || t.startsWith("Keine Verbindung")) "" else t
             np.update(true, true, song.ifEmpty { st.name }, if (song.isEmpty()) "Radio" else st.name, icons[st.url])
@@ -429,6 +429,7 @@ class MainActivity : ScaledActivity() {
         if (id != "wetter") closeWeatherPage()
         val wasRadio = radioPage
         radioPage = id == "radio"
+        updateCatUi()
         if (wasRadio != radioPage || id == "uhr" || id == "radio") {
             applyOrientation(resources.configuration)
             buildFavorites()
@@ -744,6 +745,7 @@ class MainActivity : ScaledActivity() {
             NowPlaying(this, toggleCb = { notifToggle() }, stopCb = { notifStop() })
         } catch (_: Exception) { null }
         loadStations()
+        setupCats()
         Podcast.last(prefs)?.let { (p, e) ->
             pcPod = p
             pcEp = e
@@ -1354,6 +1356,7 @@ class MainActivity : ScaledActivity() {
 
     private fun setNight(on: Boolean) {
         night = on
+        main.post { updateCatUi() }
         if (on && pid != "uhr") {
             pid = "uhr"
             radioPage = false
@@ -1942,12 +1945,13 @@ class MainActivity : ScaledActivity() {
     }
 
     private fun playCurrent() {
-        if (stations.isEmpty()) {
+        val ext = extStation
+        if (stations.isEmpty() && ext == null) {
             showStations()
             return
         }
-        current = current.coerceIn(0, stations.size - 1)
-        val s = stations[current]
+        if (stations.isNotEmpty()) current = current.coerceIn(0, stations.size - 1)
+        val s = ext ?: stations[current]
         if (pcMode) {
             savePcPos()
             pcMode = false
@@ -1999,9 +2003,11 @@ class MainActivity : ScaledActivity() {
             refreshPanels()
             return
         }
-        tvStation.text = if (stations.isEmpty()) "Keine Sender – tippe auf ＋"
-        else (if (wantPlaying) "" else "▶  ") + stations[current.coerceIn(0, stations.size - 1)].name
+        val cs = curStation()
+        tvStation.text = if (cs == null) "Keine Sender – tippe auf ＋"
+        else (if (wantPlaying) "" else "▶  ") + cs.name
         buildFavorites()
+        buildCatList()
         refreshPanels()
     }
 
@@ -2023,7 +2029,8 @@ class MainActivity : ScaledActivity() {
     }
 
     private fun stationClick(i: Int) {
-        if (i == current && wantPlaying) stopRadio() else {
+        if (i == current && wantPlaying && extStation == null) stopRadio() else {
+            extStation = null
             current = i
             playCurrent()
         }
@@ -2085,7 +2092,7 @@ class MainActivity : ScaledActivity() {
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         item.setOnClickListener { stationClick(i) }
         item.setOnLongClickListener {
-            confirmRemove(i)
+            favMenu(i)
             true
         }
         return item
@@ -2133,7 +2140,7 @@ class MainActivity : ScaledActivity() {
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         key.setOnClickListener { stationClick(i) }
         key.setOnLongClickListener {
-            confirmRemove(i)
+            favMenu(i)
             true
         }
         return key
@@ -2233,6 +2240,11 @@ class MainActivity : ScaledActivity() {
         if (!::favRow.isInitialized || !::skin.isInitialized) return
         favRow.removeAllViews()
         favGrid.removeAllViews()
+        if (catListMode()) {
+            favScroll.visibility = View.GONE
+            findViewById<View>(R.id.favGridScroll).visibility = View.GONE
+            return
+        }
         val active = current.coerceIn(0, maxOf(0, stations.size - 1))
         dialView.setStations(stations.map { it.name }, active, wantPlaying)
 
@@ -2253,7 +2265,7 @@ class MainActivity : ScaledActivity() {
                     }
                     setOnClickListener { stationClick(i) }
                     setOnLongClickListener {
-                        confirmRemove(i)
+                        favMenu(i)
                         true
                     }
                 }
@@ -2296,7 +2308,7 @@ class MainActivity : ScaledActivity() {
                         key.textSize = fsp(12f)
                         key.setOnClickListener { stationClick(i) }
                         key.setOnLongClickListener {
-                            confirmRemove(i)
+                            favMenu(i)
                             true
                         }
                         views.add(key)
@@ -2324,7 +2336,7 @@ class MainActivity : ScaledActivity() {
                     key.textSize = fsp(12f)
                     key.setOnClickListener { stationClick(i) }
                     key.setOnLongClickListener {
-                        confirmRemove(i)
+                        favMenu(i)
                         true
                     }
                     favRow.addView(key, LinearLayout.LayoutParams(fdp(74), fdp(60)).apply {
@@ -2476,6 +2488,347 @@ class MainActivity : ScaledActivity() {
         d.show()
     }
 
+    // ================================================================ Kategorien
+
+    /** Sender aus einer Kategorie/Vorschlag, der gerade läuft (nicht in den Favoriten). */
+    private var extStation: Station? = null
+    private var radioCat = RadioCats.FAV
+    private lateinit var catStrip: android.widget.HorizontalScrollView
+    private lateinit var catStripRow: LinearLayout
+    private lateinit var catBox: android.widget.ScrollView
+    private lateinit var catList: LinearLayout
+    private val catSugg = HashMap<String, List<Station>>()
+    private val catLoading = HashSet<String>()
+
+    private fun curStation(): Station? = extStation ?: stations.getOrNull(current.coerceIn(0, maxOf(0, stations.size - 1)))
+
+    private fun catListMode() = radioPage && !night && radioCat != RadioCats.FAV && ::catBox.isInitialized
+
+    private fun setupCats() {
+        radioCat = prefs.getString("radioCat", RadioCats.FAV) ?: RadioCats.FAV
+        if (RadioCats.cats(prefs).none { it.id == radioCat }) radioCat = RadioCats.FAV
+        val rm = findViewById<LinearLayout>(R.id.radioMain)
+        catStrip = android.widget.HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            visibility = View.GONE
+        }
+        catStripRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        catStrip.addView(catStripRow)
+        rm.addView(catStrip, 0, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(6).toInt()
+        })
+        catBox = android.widget.ScrollView(this).apply { visibility = View.GONE; isVerticalScrollBarEnabled = false }
+        catList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        catBox.addView(catList)
+        val gi = rm.indexOfChild(findViewById(R.id.favGridScroll))
+        rm.addView(catBox, gi + 1, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    }
+
+    /** Kategorie-Leiste und Liste ein-/ausblenden (nur auf der Radio-Seite). */
+    private fun updateCatUi() {
+        if (!::catStrip.isInitialized) return
+        val on = radioPage && !night
+        catStrip.visibility = vis(on)
+        val list = catListMode()
+        catBox.visibility = vis(list)
+        val rm = findViewById<LinearLayout>(R.id.radioMain)
+        val lp = rm.layoutParams
+        val want = if (on) ViewGroup.LayoutParams.MATCH_PARENT else ViewGroup.LayoutParams.WRAP_CONTENT
+        if (lp.height != want) { lp.height = want; rm.layoutParams = lp }
+        if (on) buildCatStrip()
+        buildFavorites()
+        buildCatList()
+    }
+
+    private fun pill(text: String, selected: Boolean, onClick: () -> Unit, onLong: (() -> Unit)? = null) = TextView(this).apply {
+        this.text = text
+        textSize = fsp(14f)
+        gravity = Gravity.CENTER
+        setSingleLine(true)
+        val ph = dp(14).toInt()
+        setPadding(ph, dp(9).toInt(), ph, dp(9).toInt())
+        setTextColor(if (selected) Look(skin).onAccent else skin.fg)
+        typeface = Typeface.create(skin.textFamily, if (selected) Typeface.BOLD else Typeface.NORMAL)
+        background = GradientDrawable().apply {
+            cornerRadius = dp(1) * minOf(skin.corner + 6f, 20f)
+            setColor(if (selected) skin.accent else Color.argb(36, Color.red(skin.fg), Color.green(skin.fg), Color.blue(skin.fg)))
+        }
+        setOnClickListener { onClick() }
+        if (onLong != null) setOnLongClickListener { onLong(); true }
+    }
+
+    private fun buildCatStrip() {
+        catStripRow.removeAllViews()
+        val lpf = { LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { rightMargin = dp(6).toInt() } }
+        for (c in RadioCats.cats(prefs)) {
+            catStripRow.addView(pill(c.name, c.id == radioCat, onClick = {
+                radioCat = c.id
+                prefs.edit().putString("radioCat", c.id).apply()
+                updateCatUi()
+            }, onLong = { catMenu(c) }), lpf())
+        }
+        catStripRow.addView(pill("＋ Kategorie", false, onClick = { newCat() }), lpf())
+        catStrip.post {
+            val v = (0 until catStripRow.childCount).map { catStripRow.getChildAt(it) }
+                .firstOrNull { (it as? TextView)?.typeface?.isBold == true } ?: return@post
+            if (v.right > catStrip.scrollX + catStrip.width || v.left < catStrip.scrollX) catStrip.smoothScrollTo(maxOf(0, v.left - dp(20).toInt()), 0)
+        }
+    }
+
+    private fun newCat() {
+        val et = input("Name, z. B. Hörspiele")
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle("Neue Kategorie")
+            .setView(padded(et))
+            .setPositiveButton("Anlegen") { _, _ ->
+                val n = et.text.toString().trim()
+                if (n.isEmpty()) return@setPositiveButton
+                val l = RadioCats.cats(prefs)
+                val c = RadioCat(RadioCats.newId(), n, n.lowercase(Locale.GERMANY))
+                l.add(c)
+                RadioCats.saveCats(prefs, l)
+                radioCat = c.id
+                prefs.edit().putString("radioCat", c.id).apply()
+                updateCatUi()
+            }
+            .setNegativeButton("Abbrechen", null)
+            .show()
+    }
+
+    private fun catMenu(c: RadioCat) {
+        val l = RadioCats.cats(prefs)
+        val i = l.indexOfFirst { it.id == c.id }
+        val items = ArrayList<Pair<String, () -> Unit>>()
+        if (i > 0) items.add("◀  Nach links" to { l.add(i - 1, l.removeAt(i)); RadioCats.saveCats(prefs, l); updateCatUi() })
+        if (i < l.size - 1) items.add("▶  Nach rechts" to { l.add(i + 1, l.removeAt(i)); RadioCats.saveCats(prefs, l); updateCatUi() })
+        if (c.id != RadioCats.FAV) {
+            items.add("Umbenennen" to {
+                val et = input("Name").apply { setText(c.name) }
+                AlertDialog.Builder(this, dlgTheme).setTitle("Kategorie umbenennen").setView(padded(et))
+                    .setPositiveButton("OK") { _, _ ->
+                        val n = et.text.toString().trim()
+                        if (n.isNotEmpty()) { l[i].name = n; RadioCats.saveCats(prefs, l); updateCatUi() }
+                    }.setNegativeButton("Abbrechen", null).show()
+            })
+            items.add("Löschen" to {
+                AlertDialog.Builder(this, dlgTheme).setMessage("Kategorie „${c.name}“ löschen? Die Sender bleiben in anderen Kategorien und Favoriten erhalten.")
+                    .setPositiveButton("Löschen") { _, _ ->
+                        RadioCats.removeCat(prefs, c.id)
+                        if (radioCat == c.id) { radioCat = RadioCats.FAV; prefs.edit().putString("radioCat", radioCat).apply() }
+                        updateCatUi()
+                    }.setNegativeButton("Abbrechen", null).show()
+            })
+        }
+        AlertDialog.Builder(this, dlgTheme).setTitle(c.name)
+            .setItems(items.map { it.first }.toTypedArray()) { _, w -> items[w].second() }
+            .show()
+    }
+
+    private fun isFav(s: Station) = stations.any { it.url == s.url }
+
+    private fun toggleFav(s: Station) {
+        val i = stations.indexOfFirst { it.url == s.url }
+        if (i >= 0) {
+            val wasCur = i == current
+            stations.removeAt(i)
+            if (i < current) current--
+            if (current >= stations.size) current = 0
+            if (wasCur && wantPlaying && extStation == null) extStation = s
+            toast("Aus den Favoriten entfernt")
+        } else {
+            stations.add(s)
+            toast("Zu den Favoriten hinzugefügt")
+            loadIcons()
+        }
+        saveStations()
+        showStationName()
+    }
+
+    private fun addToCat(cat: String, s: Station, play: Boolean = false) {
+        if (cat == RadioCats.FAV) { if (!isFav(s)) toggleFav(s) }
+        else {
+            val l = RadioCats.stations(prefs, cat)
+            if (l.none { it.url == s.url }) { l.add(s); RadioCats.saveStations(prefs, cat, l) }
+        }
+        if (play) playStation(s)
+        buildCatList()
+    }
+
+    /** Sender abspielen – ist er ein Favorit, wird er dort ausgewählt. */
+    private fun playStation(s: Station) {
+        val i = stations.indexOfFirst { it.url == s.url }
+        if (i >= 0) { extStation = null; current = i } else extStation = s
+        playCurrent()
+    }
+
+    /** Welche Kategorien hat ein Sender? Mehrfachauswahl. */
+    private fun chooseCats(s: Station) {
+        val cats = RadioCats.cats(prefs)
+        val names = cats.map { it.name }.toTypedArray()
+        val checked = BooleanArray(cats.size) { k ->
+            val c = cats[k]
+            if (c.id == RadioCats.FAV) isFav(s) else RadioCats.stations(prefs, c.id).any { it.url == s.url }
+        }
+        AlertDialog.Builder(this, dlgTheme)
+            .setTitle("„${s.name}“ in Kategorien")
+            .setMultiChoiceItems(names, checked) { _, w, v -> checked[w] = v }
+            .setPositiveButton("OK") { _, _ ->
+                cats.forEachIndexed { k, c ->
+                    if (c.id == RadioCats.FAV) { if (checked[k] != isFav(s)) toggleFav(s) }
+                    else {
+                        val l = RadioCats.stations(prefs, c.id)
+                        val has = l.any { it.url == s.url }
+                        if (checked[k] && !has) l.add(s)
+                        if (!checked[k] && has) l.removeAll { it.url == s.url }
+                        if (checked[k] != has) RadioCats.saveStations(prefs, c.id, l)
+                    }
+                }
+                buildCatList()
+            }
+            .setNegativeButton("Abbrechen", null)
+            .show()
+    }
+
+    /** Lange drücken auf einen Favoriten. */
+    private fun favMenu(i: Int) {
+        if (i !in stations.indices) return
+        val s = stations[i]
+        val items = ArrayList<Pair<String, () -> Unit>>()
+        if (i > 0) items.add("◀  Nach vorne" to { moveFav(i, i - 1) })
+        if (i < stations.size - 1) items.add("▶  Nach hinten" to { moveFav(i, i + 1) })
+        items.add("Kategorien …" to { chooseCats(s) })
+        items.add("Aus Favoriten entfernen" to { confirmRemove(i) })
+        AlertDialog.Builder(this, dlgTheme).setTitle(s.name)
+            .setItems(items.map { it.first }.toTypedArray()) { _, w -> items[w].second() }
+            .show()
+    }
+
+    private fun moveFav(from: Int, to: Int) {
+        val cur = stations.getOrNull(current)
+        stations.add(to, stations.removeAt(from))
+        if (cur != null) current = stations.indexOf(cur).coerceAtLeast(0)
+        saveStations()
+        showStationName()
+    }
+
+    private fun ensureIcon(s: Station) {
+        if (icons.containsKey(s.url) || !s.icon.startsWith("http") || !catLoading.add("ic" + s.url)) return
+        io.execute {
+            val b = loadBitmap(s.icon)
+            if (b != null) { icons[s.url] = b; main.post { buildCatListSoon() } }
+        }
+    }
+
+    private val catRebuild = Runnable { buildCatList() }
+    private fun buildCatListSoon() { main.removeCallbacks(catRebuild); main.postDelayed(catRebuild, 300) }
+
+    private fun catRow(s: Station, own: Boolean, cat: String): View {
+        val playing = wantPlaying && !pcMode && curStation()?.url == s.url
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            val p = dp(6).toInt()
+            setPadding(p, p / 2, p, p / 2)
+            background = GradientDrawable().apply {
+                cornerRadius = dp(1) * minOf(skin.corner, 14f)
+                setColor(if (playing) Color.argb(70, Color.red(skin.accent), Color.green(skin.accent), Color.blue(skin.accent))
+                else Color.argb(18, Color.red(skin.fg), Color.green(skin.fg), Color.blue(skin.fg)))
+            }
+            setOnClickListener { if (playing) stopRadio() else playStation(s) }
+            setOnLongClickListener {
+                val items = ArrayList<Pair<String, () -> Unit>>()
+                if (own) {
+                    val l = RadioCats.stations(prefs, cat)
+                    val i = l.indexOfFirst { it.url == s.url }
+                    if (i > 0) items.add("▲  Nach oben" to { l.add(i - 1, l.removeAt(i)); RadioCats.saveStations(prefs, cat, l); buildCatList() })
+                    if (i in 0 until l.size - 1) items.add("▼  Nach unten" to { l.add(i + 1, l.removeAt(i)); RadioCats.saveStations(prefs, cat, l); buildCatList() })
+                } else items.add("＋  In diese Kategorie" to { addToCat(cat, s) })
+                items.add("Kategorien …" to { chooseCats(s) })
+                if (own) items.add("Aus dieser Kategorie entfernen" to {
+                    RadioCats.saveStations(prefs, cat, RadioCats.stations(prefs, cat).filter { it.url != s.url })
+                    buildCatList()
+                })
+                AlertDialog.Builder(this@MainActivity, dlgTheme).setTitle(s.name)
+                    .setItems(items.map { it.first }.toTypedArray()) { _, w -> items[w].second() }
+                    .show()
+                true
+            }
+        }
+        ensureIcon(s)
+        val logo = fdp(40)
+        row.addView(logoView(s, logo), LinearLayout.LayoutParams(logo, logo).apply { rightMargin = dp(10).toInt() })
+        row.addView(TextView(this).apply {
+            text = s.name
+            textSize = fsp(16f)
+            setTextColor(skin.fg)
+            typeface = Typeface.create(skin.textFamily, if (playing) Typeface.BOLD else Typeface.NORMAL)
+            setSingleLine(true)
+            ellipsize = TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (!own) row.addView(TextView(this).apply {
+            text = "＋"
+            textSize = fsp(20f)
+            gravity = Gravity.CENTER
+            setTextColor(skin.fg)
+            setPadding(dp(10).toInt(), 0, dp(6).toInt(), 0)
+            setOnClickListener { addToCat(cat, s); toast("In „${RadioCats.cats(prefs).firstOrNull { it.id == cat }?.name}“ aufgenommen") }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, fdp(44)))
+        val fav = isFav(s)
+        row.addView(TextView(this).apply {
+            text = if (fav) "★" else "☆"
+            textSize = fsp(22f)
+            gravity = Gravity.CENTER
+            setTextColor(if (fav) skin.accent else skin.fg)
+            setPadding(dp(10).toInt(), 0, dp(4).toInt(), 0)
+            setOnClickListener { toggleFav(s); buildCatList() }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, fdp(44)))
+        return row
+    }
+
+    private fun catHead(t: String) = TextView(this).apply {
+        text = t
+        textSize = fsp(12f)
+        setTextColor(skin.accent)
+        setPadding(dp(4).toInt(), dp(12).toInt(), 0, dp(4).toInt())
+    }
+
+    /** Liste der gewählten Kategorie: eigene Sender, darunter Top-Sender als Vorschläge. */
+    private fun buildCatList() {
+        if (!::catList.isInitialized || !catListMode()) return
+        val cat = RadioCats.cats(prefs).firstOrNull { it.id == radioCat } ?: return
+        val y = catBox.scrollY
+        catList.removeAllViews()
+        val lp = { LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, fdp(52)).apply { setMargins(0, dp(2).toInt(), 0, dp(2).toInt()) } }
+        val own = RadioCats.stations(prefs, cat.id)
+        for (s in own) catList.addView(catRow(s, true, cat.id), lp())
+        if (own.isEmpty()) catList.addView(TextView(this).apply {
+            text = "Noch keine eigenen Sender in „${cat.name}“. Tippe unten auf ＋ bei einem Vorschlag, auf ☆ für die Favoriten – oder suche einen Sender."
+            textSize = fsp(13f)
+            setTextColor(skin.sub)
+            setPadding(dp(4).toInt(), dp(6).toInt(), dp(4).toInt(), dp(6).toInt())
+        })
+        catList.addView(pill("🔍  Sender suchen", false, onClick = { askSearch() }), LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6).toInt() })
+        if (cat.tags.isNotBlank()) {
+            catList.addView(catHead("VORSCHLÄGE · TOP-SENDER " + cat.name.uppercase(Locale.GERMANY)))
+            val sug = catSugg[cat.id]
+            if (sug == null) {
+                catList.addView(TextView(this).apply { text = "Lade …"; setTextColor(skin.sub); textSize = fsp(13f) })
+                if (catLoading.add("s" + cat.id)) io.execute {
+                    val l = try { RadioCats.suggestions(this, cat) { radioBrowser(it) } } catch (_: Exception) { emptyList() }
+                    main.post { catSugg[cat.id] = l; catLoading.remove("s" + cat.id); buildCatList() }
+                }
+            } else {
+                val ownUrls = own.map { it.url }.toSet()
+                val rest = sug.filter { it.url !in ownUrls }
+                if (rest.isEmpty()) catList.addView(TextView(this).apply { text = if (sug.isEmpty()) "Keine Vorschläge gefunden." else "Alle Vorschläge sind schon drin."; setTextColor(skin.sub); textSize = fsp(13f) })
+                for (s in rest) catList.addView(catRow(s, false, cat.id), lp())
+            }
+        }
+        catBox.post { catBox.scrollTo(0, y) }
+    }
+
     private fun confirmRemove(pos: Int) {
         if (pos !in stations.indices) return
         val s = stations[pos]
@@ -2578,7 +2931,9 @@ class MainActivity : ScaledActivity() {
                 }
                 AlertDialog.Builder(this, dlgTheme)
                     .setTitle("Treffer – antippen zum Hinzufügen")
-                    .setItems(labels.toTypedArray()) { _, which -> addStation(found[which]) }
+                    .setItems(labels.toTypedArray()) { _, which ->
+                        if (catListMode()) addToCat(radioCat, found[which], play = true) else addStation(found[which])
+                    }
                     .setNegativeButton("Abbrechen", null)
                     .show()
             }
