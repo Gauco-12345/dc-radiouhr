@@ -746,6 +746,7 @@ class MainActivity : ScaledActivity() {
         } catch (_: Exception) { null }
         loadStations()
         setupCats()
+        setupAdBadge()
         Podcast.last(prefs)?.let { (p, e) ->
             pcPod = p
             pcEp = e
@@ -1990,6 +1991,7 @@ class MainActivity : ScaledActivity() {
 
     private fun updatePlayButton() {
         btnPlay.setImageResource(if (wantPlaying) R.drawable.ic_stop else R.drawable.ic_play)
+        updateAdBadge()
         refreshPanels()
     }
 
@@ -1999,6 +2001,7 @@ class MainActivity : ScaledActivity() {
         if (pcMode && pe != null && pp != null) {
             tvStation.text = (if (pcPlaying()) "" else "▶  ") + (if (isMedia(pp)) "♪  " else "🎙  ") + pp.title
             tvNowPlaying.text = pe.title
+            updateAdBadge()
             buildFavorites()
             refreshPanels()
             return
@@ -2006,6 +2009,7 @@ class MainActivity : ScaledActivity() {
         val cs = curStation()
         tvStation.text = if (cs == null) "Keine Sender – tippe auf ＋"
         else (if (wantPlaying) "" else "▶  ") + cs.name
+        updateAdBadge()
         buildFavorites()
         buildCatList()
         refreshPanels()
@@ -2272,7 +2276,7 @@ class MainActivity : ScaledActivity() {
                 val logo = fdp(40)
                 row.addView(logoView(s, logo), LinearLayout.LayoutParams(logo, logo).apply { rightMargin = dp(10).toInt() })
                 row.addView(TextView(this).apply {
-                    text = s.name
+                    text = s.name + adMark(s)
                     textSize = fsp(16f)
                     setTextColor(skin.fg)
                     typeface = Typeface.create(skin.textFamily, if (on) Typeface.BOLD else Typeface.NORMAL)
@@ -2759,7 +2763,7 @@ class MainActivity : ScaledActivity() {
         val logo = fdp(40)
         row.addView(logoView(s, logo), LinearLayout.LayoutParams(logo, logo).apply { rightMargin = dp(10).toInt() })
         row.addView(TextView(this).apply {
-            text = s.name
+            text = s.name + adMark(s)
             textSize = fsp(16f)
             setTextColor(skin.fg)
             typeface = Typeface.create(skin.textFamily, if (playing) Typeface.BOLD else Typeface.NORMAL)
@@ -2821,12 +2825,66 @@ class MainActivity : ScaledActivity() {
                 }
             } else {
                 val ownUrls = own.map { it.url }.toSet()
-                val rest = sug.filter { it.url !in ownUrls }
+                val rest = sug.filter { it.url !in ownUrls }.sortedBy { if (adState(it) == 1) 1 else 0 }
                 if (rest.isEmpty()) catList.addView(TextView(this).apply { text = if (sug.isEmpty()) "Keine Vorschläge gefunden." else "Alle Vorschläge sind schon drin."; setTextColor(skin.sub); textSize = fsp(13f) })
                 for (s in rest) catList.addView(catRow(s, false, cat.id), lp())
             }
         }
         catBox.post { catBox.scrollTo(0, y) }
+    }
+
+    // ================================================================ Werbung beim Start
+
+    /** 0 = unbekannt, 1 = Werbung beim Start, 2 = werbefrei – je Stream-Adresse gemerkt. */
+    private fun adFlags(): JSONObject = try { JSONObject(prefs.getString("adFlags", "{}")) } catch (_: Exception) { JSONObject() }
+    private fun adState(s: Station) = adFlags().optInt(s.url, 0)
+    private fun adMark(s: Station) = when (adState(s)) { 1 -> "  📢"; 2 -> "  ✓"; else -> "" }
+
+    private lateinit var adBadge: TextView
+
+    private fun setupAdBadge() {
+        val rm = findViewById<LinearLayout>(R.id.radioMain)
+        adBadge = TextView(this).apply {
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setPadding(dp(12).toInt(), dp(4).toInt(), dp(12).toInt(), dp(4).toInt())
+            visibility = View.GONE
+            setOnClickListener {
+                val st = curStation() ?: return@setOnClickListener
+                val o = adFlags()
+                val next = (o.optInt(st.url, 0) + 1) % 3
+                if (next == 0) o.remove(st.url) else o.put(st.url, next)
+                prefs.edit().putString("adFlags", o.toString()).apply()
+                toast(when (next) { 1 -> "Gemerkt: „${st.name}“ hat Werbung beim Einschalten"; 2 -> "Gemerkt: „${st.name}“ ist werbefrei"; else -> "Markierung entfernt" })
+                updateAdBadge()
+                buildFavorites()
+                buildCatList()
+            }
+        }
+        val i = rm.indexOfChild(tvNowPlaying)
+        rm.addView(adBadge, i + 1, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            topMargin = dp(2).toInt()
+        })
+    }
+
+    /** Kleines Zeichen unter dem Sendernamen: antippen schaltet ? → Werbung → werbefrei. */
+    private fun updateAdBadge() {
+        if (!::adBadge.isInitialized || !::skin.isInitialized) return
+        val st = curStation()
+        if (st == null || pcMode || !wantPlaying || night) { adBadge.visibility = View.GONE; return }
+        adBadge.visibility = View.VISIBLE
+        val (txt, col) = when (adState(st)) {
+            1 -> "📢 Werbung beim Start" to 0xFFE0563B.toInt()
+            2 -> "✓ werbefrei" to 0xFF3FAE6A.toInt()
+            else -> "📢 Werbung?" to skin.sub
+        }
+        adBadge.text = txt
+        adBadge.setTextColor(col)
+        adBadge.background = GradientDrawable().apply {
+            cornerRadius = dp(12)
+            setStroke(dp(1).toInt(), col)
+        }
     }
 
     private fun confirmRemove(pos: Int) {
